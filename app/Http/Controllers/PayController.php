@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\benefit;
+use App\Models\embassadors;
+use App\Models\embassadorsGift;
 use App\Models\Gift;
 use App\Models\GiftRef;
 use DateTime;
@@ -26,10 +28,11 @@ class PayController extends Controller
         $validated = $request->validate(
             [
                 'amount' => 'required|integer|min:1',
-                'message' => 'required|string|max:255',
+                'message' => 'required|string|max:4000',
                 'name' => 'nullable|string|max:100',
                 'phoneNumber' => 'required|string|regex:/^[0-9]{12}$/',
-                'operator' => 'required|string|in:orange,mtn,operator3', // Remplacer par les opérateurs valides
+                'operator' => 'required|string|in:orange,mtn,operator3',
+                'promoCode' => 'nullable|string|max:100',
             ]
         ); // Les données sont maintenant validées et sécurisées
         $amount = $validated['amount'];
@@ -38,9 +41,95 @@ class PayController extends Controller
         $phoneNumber = $validated['phoneNumber'];
         $operator = $validated['operator'];
         $amountBenefit = 500;
+        $promoCode = $validated['promoCode'];
+        $promoAmount = 0;
+        $embassor_amount = 0;
+
+
         if ($amount < 600) {
             $amountBenefit = 25;
+            $promoAmount = 25;
+        } else if ($amount > 601 && $amount <= 2000) {
+            $amountBenefit = 75;
+            $promoAmount = $amountBenefit - 25;
+        } else if ($amount > 2000 && $amount <= 3000) {
+            $amountBenefit = 100;
+            $promoAmount = $amountBenefit - 50;
+        } else if ($amount > 3000 && $amount <= 4000) {
+            $amountBenefit = 175;
+            $promoAmount = $amountBenefit - 50;
+        } else if ($amount > 4000 && $amount <= 5000) {
+            $amountBenefit = 200;
+            $promoAmount = $amountBenefit - 50;
+        } else if ($amount > 5000 && $amount <= 8000) {
+            $amountBenefit = 200;
+            $promoAmount = $amountBenefit - 50;
+        } else if ($amount > 8000 && $amount <= 20000) {
+            $amountBenefit = 350;
+            $promoAmount = $amountBenefit - 75;
+        } else if ($amount > 20000 && $amount <= 40000) {
+            $amountBenefit = 500;
+            $promoAmount = $amountBenefit - 75;
+        } else if ($amount > 40000 && $amount <= 60000) {
+            $amountBenefit = 800;
+            $promoAmount = $amountBenefit - 75;
+        } else if ($amount > 60000 && $amount <= 90000) {
+            $amountBenefit = 1100;
+            $promoAmount = $amountBenefit - 75;
+        } else if ($amount > 90000 && $amount <= 100000) {
+            $amountBenefit = 1300;
+            $promoAmount = $amountBenefit - 100;
+        } else if ($amount > 100000 && $amount <= 150000) {
+            $amountBenefit = 1800;
+            $promoAmount = $amountBenefit - 150;
+        } else if ($amount > 150000 && $amount <= 200000) {
+            $amountBenefit = 2300;
+            $promoAmount = $amountBenefit - 100;
+        } else if ($amount > 200000 && $amount <= 250000) {
+            $amountBenefit = 2800;
+            $promoAmount = $amountBenefit - 200;
+        } else if ($amount > 250000 && $amount <= 300000) {
+            $amountBenefit = 3300;
+            $promoAmount = $amountBenefit - 300;
+        } else if ($amount > 300000 && $amount <= 350000) {
+            $amountBenefit = 3800;
+            $promoAmount = $amountBenefit - 300;
+        } else if ($amount > 350000 && $amount <= 400000) {
+            $amountBenefit = 4400;
+            $promoAmount = $amountBenefit - 300;
+        } else if ($amount > 400000 && $amount <= 450000) {
+            $amountBenefit = 4900;
+            $promoAmount = $amountBenefit - 300;
+        } else if ($amount > 450000 && $amount <= 500000) {
+            $amountBenefit = 5500;
+            $promoAmount = $amountBenefit - 300;
+        } else if ($amount > 500000 && $amount <= 800000) {
+            $amountBenefit = 9000;
+            $promoAmount = $amountBenefit - 500;
+        } else if ($amount > 800000 && $amount <= 1100000) {
+            $amountBenefit = 15000;
+            $promoAmount = $amountBenefit - 1000;
+        } else if ($amount > 900000 && $amount <= 2000000) {
+            $amountBenefit = 25000;
+            $promoAmount = $amountBenefit - 5000;
+        } else {
+            $amountBenefit = 50000;
+            $promoAmount = $amountBenefit - 10000;
         }
+
+        if (isset($promoCode) && $promoCode != null) {
+            $existPromo = embassadors::where('code', '=', $promoCode)->first();
+            if ($existPromo == null) {
+                $promoAmount = 0;
+            } else {
+                $embassor_amount = $amountBenefit - $promoAmount;
+            }
+
+        } else {
+            $promoAmount = 0;
+        }
+
+
         if ($operator == 'orange') {
             $operator = 'OM';
         }
@@ -62,10 +151,10 @@ class PayController extends Controller
 
         for ($i = 0; $i < $maxRetries; $i++) {
             $response = $client->post(
-                'https://demo.campay.net/api/collect/',
+                'https://www.campay.net/api/collect/',
                 [
                     'headers' => [
-                        'Authorization' => 'Token b7a8bcef814b1c221e89ada3ddb2babf33605a13',
+                        'Authorization' => 'Token 4c298a57e6e3bc67e07ac1f84c752b0076d61685',
                         'Content-Type' => 'application/json',
                     ],
                     'json' => [
@@ -75,7 +164,7 @@ class PayController extends Controller
                         'description' => "Dépot", // Description du paiement
                         'first_name' => "blo", // OPTIONAL. Chaîne de caractères
                         'last_name' => "aucun", // OPTIONAL. Chaîne de caractères
-                        'email' => "aucun@mail.com", // OPTIONAL. Chaîne de caractères
+                        'email' => "aucun@mail.com",
                         'external_reference' => $transactionReference, // OPTIONAL. Référence de la transaction générée par ton système
                         'redirect_url' => "null", // URL de redirection après succès
                         'failure_redirect_url' => "null", // URL de redirection après échec
@@ -107,18 +196,35 @@ class PayController extends Controller
                         'amount' => $amount,
                         'sender' => $phoneNumber,
                         'sender_opertor' => $operator,
-                        'status' => "Delivery"
+                        'message' => $message,
+                        'other_one' => $request->gift_,
+                        'status' => "Send"
                     ]);
                     $giftRef = GiftRef::create([
                         'ref' => $responseBody['reference'],
                         'amount' => $amount,
-                        'status' => "Delivery"
+                        'status' => "Send"
                     ]);
                     $benefi = benefit::create([
                         'ref' => $responseBody['reference'],
-                        'amount' => $amountBenefit,
-                        'status' => "Delivery"
+                        'amount' => $amountBenefit - $embassor_amount,
+                        'status' => "Send"
                     ]);
+                    if (isset($promoCode) && $promoCode != null) {
+                        $existPromo = embassadors::where('code', '=', $promoCode)->first();
+                        if ($existPromo == null) {
+                            $promoAmount = 0;
+                        } else {
+                            $add = embassadorsGift::create([
+                                'transaction' => $transactionReference,
+                                'code' => $promoCode,
+                                'amount' => $embassor_amount,
+                                'status' => 'Send'
+                            ]);
+                        }
+
+                    } else {
+                    }
                 } catch (\Exception $e) {
                     return response()->json(['error' => 'Erreur lors de la création du cadeau'], 500);
                 }

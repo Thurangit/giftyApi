@@ -61,10 +61,10 @@ class ReceivePayController extends Controller
 
         for ($i = 0; $i < $maxRetries; $i++) {
             $response = $client->post(
-                'https://demo.campay.net/api/collect/',
+                'https://www.campay.net/api/collect/',
                 [
                     'headers' => [
-                        'Authorization' => 'Token b7a8bcef814b1c221e89ada3ddb2babf33605a13',
+                        'Authorization' => 'Token 4c298a57e6e3bc67e07ac1f84c752b0076d61685',
                         'Content-Type' => 'application/json',
                     ],
                     'json' => [
@@ -144,39 +144,103 @@ class ReceivePayController extends Controller
     {
 
         $phoneNumber = $request->input('phoneNumber');
-        $amount = $request->input('amount');
-        function generateUuid()
-        {
-            $data = random_bytes(16); // Modifier quelques bits pour respecter le format UUID v4
-            $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
-            $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
-            return vsprintf('%08s-%04s-%04x-%04x-%12s', str_split(bin2hex($data), 4));
-        } // Exemple d'utilisation
-        $uuid = generateUuid();
-        $client = new Client();
-        $response = $client->post(
-            'https://demo.campay.net/api/withdraw/',
-            [
-                'headers' => [
-                    'Authorization' => 'Token b7a8bcef814b1c221e89ada3ddb2babf33605a13',
-                    'Content-Type' => 'application/json',
-                ],
-                'json' => [
-                    'amount' => "25", // Un entier valide, par exemple "5"
-                    'to' => "237" . $phoneNumber, // Un numéro de téléphone valide avec indicatif du pays, ex: "237679587525"
-                    'description' => "Reception cadeau", // Description du paiement
-                    'external_reference' => '5d457dca-e510-4cf8-a4be-0c6f6049b859', // FACULTATIF. Référence de la transaction générée par ton système
-                    'uuid' => '5d457dca-e510-4cf8-a4be-0c6f6049b859', // Un UUID4 valide
-                ]
-            ]
-        );
-        return response()->json(json_decode($response->getBody()), $response->getStatusCode());
+        $amount = $request->input('giftAmount');
+        $ref = $request->input('refGift');
+        $operator = $request->input('paymentMethod');
+        $infoGift = Gift::where('ref_two', '=', $ref)->first();
+        $Gift_Ref = GiftRef::where('ref', '=', $infoGift->ref_one)->first();
+        $Gift_App = benefit::where('ref', '=', $infoGift->ref_one)->first();
+
+        if (!$infoGift) {
+            return response()->json([
+                'error' => 'Cadeau inexistant',
+                'reference' => $ref
+            ], 408);
+        } else {
+            if ($infoGift->status == "Send") {
+                if ($Gift_Ref->status == "Send") {
+                    function generateUuid()
+                    {
+                        $data = random_bytes(16); // Modifier quelques bits pour respecter le format UUID v4
+                        $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
+                        $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
+                        return vsprintf('%08s-%04s-%04x-%04x-%12s', str_split(bin2hex($data), 4));
+                    } // Exemple d'utilisation
+                    $uuid = generateUuid();
+                    $client = new Client();
+                    $maxRetries = 120; // 2 minutes (1 tentative par seconde)
+                    $retryInterval = 1; // 1 seconde entre chaque tentative
+
+                    for ($i = 0; $i < $maxRetries; $i++) {
+                        $response = $client->post(
+                            'https://www.campay.net/api/withdraw/',
+                            [
+                                'headers' => [
+                                    'Authorization' => 'Token 4c298a57e6e3bc67e07ac1f84c752b0076d61685',
+                                    'Content-Type' => 'application/json',
+                                ],
+                                'json' => [
+                                    'amount' => $amount,
+                                    'to' => "237" . $phoneNumber,
+                                    'description' => "Reception cadeau",
+                                    'external_reference' => $uuid,
+                                    'uuid' => $uuid,
+                                ]
+                            ]
+                        );
+
+                        $responseBody = json_decode($response->getBody(), true);
+
+                        // Si le statut est SUCCESSFUL, retournez immédiatement le succès
+                        if (isset($responseBody['status']) && $responseBody['status'] === 'SUCCESSFUL') {
+
+                            $infoGift->update([
+                                'receiver_opertor' => $operator,
+                                'receiver' => $phoneNumber,
+                                'status' => 'Delivery'
+                            ]);
+                            $Gift_Ref->update([
+                                'status' => 'Delivery'
+                            ]);
+                            $Gift_App->update([
+                                'status' => 'Delivery'
+                            ]);
+
+                            return response()->json($responseBody, 200);
+                        }
+
+                        // Si le statut est autre chose que PENDING, retournez l'erreur
+                        if (isset($responseBody['status']) && $responseBody['status'] !== 'PENDING') {
+                            return response()->json($responseBody, $response->getStatusCode());
+                        }
+
+                        // Si le statut est PENDING, attendez 1 seconde avant de réessayer
+                        sleep($retryInterval);
+                    }
+
+                    // Si après 2 minutes (120 tentatives), le statut reste PENDING
+                    return response()->json([
+                        'error' => 'Transaction en attente après 2 minutes',
+                        'reference' => $ref
+                    ], 408); // Code HTTP 408 pour Request Timeout
+                }
+            } else {
+
+                return response()->json([
+                    'error' => 'Cadeau déjà retirer',
+                    'reference' => $ref
+                ], 408); // Code HTTP 408 pour Request Timeout
+
+            }
+        }
 
     }
 
     /**
      * Show the form for creating a new resource.
      */
+
+
     public function create()
     {
         //
