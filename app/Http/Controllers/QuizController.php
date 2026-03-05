@@ -8,6 +8,7 @@ use App\Models\QuizAnswer;
 use App\Models\QuizAttempt;
 use App\Models\QuizAttemptAnswer;
 use App\Models\QuizAllowedParticipant;
+use App\Helpers\CodeGenerator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
@@ -19,84 +20,115 @@ class QuizController extends Controller
      */
     public function createQuiz(Request $request)
     {
-        $validated = $request->validate([
-            'creator_name' => 'required|string|max:255',
-            'total_questions' => 'required|integer|in:5,10,15,20',
-            'required_correct' => 'required|integer|min:1',
-            'final_amount' => 'required|integer|min:0',
-            'access_type' => 'required|string|in:everyone,single,multiple',
-            'single_participant_phone' => 'nullable|string|required_if:access_type,single',
-            'allowed_phones' => 'nullable|array|required_if:access_type,multiple',
-            'allowed_phones.*' => 'string',
-            'opening_message' => 'nullable|string|max:1000',
-            'questions' => 'required|array|min:1',
-            'questions.*.question' => 'required|string',
-            'questions.*.answers' => 'required|array|min:2',
-            'questions.*.answers.*.answer' => 'required|string',
-            'questions.*.answers.*.is_correct' => 'required|boolean',
-        ]);
-
-        // Vérifier que required_correct est inférieur au total_questions
-        if ($validated['required_correct'] >= $validated['total_questions']) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Le nombre de questions à trouver doit être inférieur au nombre total de questions'
-            ], 400);
-        }
-
-        // Générer un lien unique
-        $uniqueLink = 'quiz-' . Str::random(32);
-
-        // Créer le quiz
-        $quiz = Quiz::create([
-            'creator_name' => $validated['creator_name'],
-            'unique_link' => $uniqueLink,
-            'total_questions' => $validated['total_questions'],
-            'required_correct' => $validated['required_correct'],
-            'total_amount' => $validated['final_amount'],
-            'access_type' => $validated['access_type'],
-            'single_participant_phone' => $validated['access_type'] === 'single' ? $validated['single_participant_phone'] : null,
-            'opening_message' => $validated['opening_message'] ?? null,
-            'status' => 'active'
-        ]);
-
-        // Créer les participants autorisés si access_type = multiple
-        if ($validated['access_type'] === 'multiple' && !empty($validated['allowed_phones'])) {
-            foreach ($validated['allowed_phones'] as $phone) {
-                QuizAllowedParticipant::create([
-                    'quiz_id' => $quiz->id,
-                    'phone_number' => $phone
-                ]);
-            }
-        }
-
-        // Créer les questions et réponses
-        foreach ($validated['questions'] as $index => $questionData) {
-            $question = QuizQuestion::create([
-                'quiz_id' => $quiz->id,
-                'question' => $questionData['question'],
-                'question_order' => $index + 1
+        try {
+            $validated = $request->validate([
+                'creator_name' => 'required|string|max:255',
+                'creator_email' => 'nullable|email|max:255',
+                'total_questions' => 'required|integer|in:5,10,15,20',
+                'required_correct' => 'required|integer|min:1',
+                'final_amount' => 'required|integer|min:0',
+                'access_type' => 'required|string|in:everyone,single,multiple',
+                'single_participant_phone' => 'nullable|string|required_if:access_type,single',
+                'allowed_phones' => 'nullable|array|required_if:access_type,multiple',
+                'allowed_phones.*' => 'string',
+                'opening_message' => 'nullable|string|max:1000',
+                'questions' => 'required|array|min:1',
+                'questions.*.question' => 'required|string',
+                'questions.*.answers' => 'required|array|min:2',
+                'questions.*.answers.*.answer' => 'required|string',
+                'questions.*.answers.*.is_correct' => 'required|boolean',
             ]);
 
-            foreach ($questionData['answers'] as $answerIndex => $answerData) {
-                QuizAnswer::create([
-                    'quiz_question_id' => $question->id,
-                    'answer' => $answerData['answer'],
-                    'is_correct' => $answerData['is_correct'],
-                    'answer_order' => $answerIndex + 1
-                ]);
+            // Vérifier que required_correct est inférieur au total_questions
+            if ($validated['required_correct'] >= $validated['total_questions']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Le nombre de questions à trouver doit être inférieur au nombre total de questions'
+                ], 400);
             }
+
+            // Vérifier que le nombre de questions correspond
+            if (count($validated['questions']) !== $validated['total_questions']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Le nombre de questions fourni ne correspond pas au nombre total de questions'
+                ], 400);
+            }
+
+            // Générer un lien unique
+            $uniqueLink = 'quiz-' . Str::random(32);
+
+            // Créer le quiz
+            $quiz = Quiz::create([
+                'creator_name' => $validated['creator_name'],
+                'creator_email' => $validated['creator_email'] ?? null,
+                'unique_link' => $uniqueLink,
+                'access_code' => CodeGenerator::generateAccessCode('quiz'),
+                'total_questions' => $validated['total_questions'],
+                'required_correct' => $validated['required_correct'],
+                'total_amount' => $validated['final_amount'],
+                'access_type' => $validated['access_type'],
+                'single_participant_phone' => $validated['access_type'] === 'single' ? ($validated['single_participant_phone'] ?? null) : null,
+                'opening_message' => $validated['opening_message'] ?? null,
+                'status' => 'active'
+            ]);
+
+            // Créer les participants autorisés si access_type = multiple
+            if ($validated['access_type'] === 'multiple' && !empty($validated['allowed_phones'])) {
+                foreach ($validated['allowed_phones'] as $phone) {
+                    if (!empty($phone)) {
+                        QuizAllowedParticipant::create([
+                            'quiz_id' => $quiz->id,
+                            'phone_number' => $phone
+                        ]);
+                    }
+                }
+            }
+
+            // Créer les questions et réponses
+            foreach ($validated['questions'] as $index => $questionData) {
+                $question = QuizQuestion::create([
+                    'quiz_id' => $quiz->id,
+                    'question' => $questionData['question'],
+                    'question_order' => $index + 1
+                ]);
+
+                foreach ($questionData['answers'] as $answerIndex => $answerData) {
+                    QuizAnswer::create([
+                        'quiz_question_id' => $question->id,
+                        'answer' => $answerData['answer'],
+                        'is_correct' => $answerData['is_correct'],
+                        'answer_order' => $answerIndex + 1
+                    ]);
+                }
+            }
+
+            // Utiliser l'URL du frontend depuis la requête ou une valeur par défaut
+            $frontendUrl = $request->header('Origin') ?: 'http://localhost:3000';
+            $shareLink = rtrim($frontendUrl, '/') . '/quiz/' . $uniqueLink;
+
+            return response()->json([
+                'success' => true,
+                'quiz' => $quiz->load(['questions.answers']),
+                'share_link' => $shareLink
+            ], 201);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur de validation',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Erreur lors de la création du quiz: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'request' => $request->all()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur lors de la création du quiz: ' . $e->getMessage()
+            ], 500);
         }
-
-        // Utiliser l'URL du frontend depuis la requête ou une valeur par défaut
-        $frontendUrl = $request->header('Origin') ?: 'http://localhost:3000';
-        $shareLink = rtrim($frontendUrl, '/') . '/quiz/' . $uniqueLink;
-
-        return response()->json([
-            'success' => true,
-            'quiz' => $quiz->load(['questions.answers']),
-            'share_link' => $shareLink
-        ], 201);
     }
 
     /**
@@ -137,6 +169,28 @@ class QuizController extends Controller
         return response()->json([
             'success' => true,
             'quiz' => $quizData
+        ]);
+    }
+
+    /**
+     * Récupérer les informations de partage d'un quiz (sans vérifier le statut)
+     */
+    public function getQuizShareInfo($link)
+    {
+        $quiz = Quiz::where('unique_link', $link)
+            ->select('id', 'unique_link', 'access_code', 'creator_name', 'creator_email', 'amount', 'status', 'created_at')
+            ->first();
+
+        if (!$quiz) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Quiz non trouvé'
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'quiz' => $quiz
         ]);
     }
 
@@ -307,13 +361,14 @@ class QuizController extends Controller
         ]);
 
         // Marquer le quiz comme complété selon les règles :
-        // - Si quiz destiné à une personne : marquer comme complété après une tentative
-        // - Si quiz destiné à plusieurs personnes : marquer comme complété dès qu'une personne gagne
+        // - "single" : marquer comme complété après une tentative (succès ou échec)
+        // - "multiple" : marquer comme complété dès qu'une personne gagne
+        // - "everyone" : marquer comme complété dès qu'une personne gagne
         if ($quiz->access_type === 'single') {
-            // Quiz à une personne : marquer comme complété après une tentative
+            // Quiz à une personne : marquer comme complété après une tentative (succès ou échec)
             $quiz->update(['status' => 'completed']);
-        } elseif ($quiz->access_type === 'multiple' && $hasWon) {
-            // Quiz à plusieurs personnes : marquer comme complété dès qu'une personne gagne
+        } elseif (($quiz->access_type === 'multiple' || $quiz->access_type === 'everyone') && $hasWon) {
+            // Quiz à plusieurs personnes ou tout le monde : marquer comme complété dès qu'une personne gagne
             $quiz->update(['status' => 'completed']);
         }
 
@@ -407,6 +462,99 @@ class QuizController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Erreur lors de la récupération du résultat: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Retirer le gain d'un quiz
+     */
+    public function withdrawQuizPrize(Request $request)
+    {
+        $validated = $request->validate([
+            'attemptId' => 'required|integer|exists:quiz_attempts,id',
+            'amount' => 'required|integer|min:1',
+            'name' => 'nullable|string|max:100',
+            'email' => 'nullable|email|max:255',
+            'phoneNumber' => 'required|string|regex:/^[0-9]{9,15}$/',
+            'operator' => 'required|string|in:OM,MOMO',
+            'promoCode' => 'nullable|string|max:100',
+            'paymentMethod' => 'required|string|in:Orange,MTN',
+        ]);
+
+        try {
+            $attempt = QuizAttempt::with('quiz')->find($validated['attemptId']);
+            
+            if (!$attempt) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tentative de quiz non trouvée'
+                ], 404);
+            }
+
+            if (!$attempt->has_won) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Vous n\'avez pas gagné ce quiz'
+                ], 400);
+            }
+
+            if ($attempt->status === 'withdrawn') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Le gain a déjà été retiré'
+                ], 400);
+            }
+
+            if ($attempt->won_amount != $validated['amount']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Le montant ne correspond pas au gain'
+                ], 400);
+            }
+
+            // Simuler le retrait (même logique que pour les cadeaux)
+            function generateUuid()
+            {
+                $data = random_bytes(16);
+                $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
+                $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
+                return vsprintf('%08s-%04s-%04x-%04x-%12s', str_split(bin2hex($data), 4));
+            }
+            $uuid = generateUuid();
+
+            // Simulation de réponse API pour tests
+            $responseBody = [
+                'status' => 'SUCCESSFUL',
+                'reference' => $uuid,
+                'message' => 'Transaction réussie (simulation)'
+            ];
+
+            // Mettre à jour la tentative avec les informations de retrait
+            $attempt->update([
+                'status' => 'withdrawn',
+                'receiver_operator' => $validated['operator'],
+                'receiver_phone' => $validated['phoneNumber'],
+                'receiver_name' => $validated['name'] ?? null,
+                'receiver_email' => $validated['email'] ?? null,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Gain retiré avec succès',
+                'reference' => $uuid,
+                'amount' => $validated['amount']
+            ], 200);
+
+        } catch (\Exception $e) {
+            Log::error('Erreur lors du retrait du gain de quiz: ' . $e->getMessage(), [
+                'attempt_id' => $validated['attemptId'] ?? null,
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur lors du retrait du gain: ' . $e->getMessage()
             ], 500);
         }
     }

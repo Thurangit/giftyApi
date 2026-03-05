@@ -11,6 +11,7 @@ class Challenge extends Model
 
     protected $fillable = [
         'unique_link',
+        'access_code',
         'creator_name',
         'creator_phone',
         'creator_amount',

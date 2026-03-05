@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Moment;
 use App\Models\MomentItem;
 use App\Models\MomentAttempt;
+use App\Helpers\CodeGenerator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
@@ -16,16 +17,26 @@ class MomentController extends Controller
      */
     public function createMoment(Request $request)
     {
-        $validated = $request->validate([
-            'creator_name' => 'required|string|max:255',
-            'total_moments' => 'required|integer|in:3,4,5',
-            'best_moment_order' => 'required|integer|min:1',
-            'amount' => 'required|integer|min:1',
-            'participant_phone' => 'nullable|string|max:20|regex:/^[0-9]{12}$/',
-            'opening_message' => 'nullable|string|max:1000',
-            'moments' => 'required|array|min:3|max:5',
-            'moments.*.description' => 'required|string',
-        ]);
+        try {
+            $validated = $request->validate([
+                'creator_name' => 'required|string|max:255',
+                'creator_email' => 'nullable|email|max:255',
+                'total_moments' => 'required|integer|in:3,4,5',
+                'best_moment_order' => 'required|integer|min:1',
+                'amount' => 'required|integer|min:1',
+                'opening_message' => 'nullable|string|max:1000',
+                'moments' => 'required|array|min:3|max:5',
+                'moments.*.description' => 'required|string',
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Données invalides: ' . implode(', ', array_map(function($errors) {
+                    return implode(', ', $errors);
+                }, $e->errors())),
+                'errors' => $e->errors()
+            ], 422);
+        }
 
         // Vérifier que best_moment_order est valide
         if ($validated['best_moment_order'] < 1 || $validated['best_moment_order'] > $validated['total_moments']) {
@@ -49,11 +60,12 @@ class MomentController extends Controller
         // Créer le moment
         $moment = Moment::create([
             'creator_name' => $validated['creator_name'],
+            'creator_email' => $validated['creator_email'] ?? null,
             'unique_link' => $uniqueLink,
+            'access_code' => CodeGenerator::generateAccessCode('moment'),
             'total_moments' => $validated['total_moments'],
             'best_moment_order' => $validated['best_moment_order'],
             'amount' => $validated['amount'],
-            'participant_phone' => $validated['participant_phone'] ?? null,
             'opening_message' => $validated['opening_message'] ?? null,
             'status' => 'active'
         ]);
@@ -120,6 +132,28 @@ class MomentController extends Controller
         return response()->json([
             'success' => true,
             'moment' => $momentData
+        ]);
+    }
+
+    /**
+     * Récupérer les informations de partage d'un moment (sans vérifier le statut)
+     */
+    public function getMomentShareInfo($link)
+    {
+        $moment = Moment::where('unique_link', $link)
+            ->select('id', 'unique_link', 'access_code', 'creator_name', 'creator_email', 'amount', 'status', 'created_at')
+            ->first();
+
+        if (!$moment) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Moment non trouvé'
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'moment' => $moment
         ]);
     }
 
@@ -192,11 +226,21 @@ class MomentController extends Controller
      */
     public function submitMoment(Request $request, $link)
     {
-        $validated = $request->validate([
-            'participant_name' => 'required|string|max:255',
-            'participant_phone' => 'nullable|string|max:20|regex:/^[0-9]{12}$/',
-            'selected_moment_order' => 'required|integer|min:1'
-        ]);
+        try {
+            $validated = $request->validate([
+                'participant_name' => 'required|string|max:255',
+                'participant_phone' => 'nullable|string|max:20',
+                'selected_moment_order' => 'required|integer|min:1'
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Données invalides: ' . implode(', ', array_map(function($errors) {
+                    return implode(', ', $errors);
+                }, $e->errors())),
+                'errors' => $e->errors()
+            ], 422);
+        }
 
         $moment = Moment::where('unique_link', $link)
             ->where('status', 'active')

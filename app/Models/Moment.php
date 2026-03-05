@@ -11,7 +11,9 @@ class Moment extends Model
 
     protected $fillable = [
         'creator_name',
+        'creator_email',
         'unique_link',
+        'access_code',
         'total_moments',
         'best_moment_order',
         'amount',

@@ -8,6 +8,7 @@ use App\Models\ChallengeSelectedQuestion;
 use App\Models\ChallengeAnswer;
 use App\Models\ChallengeResult;
 use App\Models\SystemQuestion;
+use App\Helpers\CodeGenerator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
@@ -22,14 +23,14 @@ class ChallengeController extends Controller
         try {
             $validated = $request->validate([
                 'creator_name' => 'required|string|max:255',
-                'creator_phone' => ['required', 'string', 'max:20', 'regex:/^[0-9]{12}$/'],
+                'creator_phone' => ['required', 'string', 'max:20', 'regex:/^[0-9]{9,15}$/'],
                 'creator_amount' => 'required|integer|min:1',
                 'amount_rule' => 'required|string|in:equal_or_more,less',
                 'total_questions' => 'required|integer|in:10,15,20,25,30',
             ], [
                 'creator_name.required' => 'Le nom est requis',
                 'creator_phone.required' => 'Le numéro de téléphone est requis',
-                'creator_phone.regex' => 'Le numéro de téléphone doit contenir exactement 12 chiffres (ex: 237612345678)',
+                'creator_phone.regex' => 'Le numéro de téléphone doit contenir entre 9 et 15 chiffres (ex: 237698559970)',
                 'creator_amount.required' => 'Le montant est requis',
                 'creator_amount.min' => 'Le montant doit être supérieur à 0',
                 'amount_rule.required' => 'La règle de montant est requise',
@@ -53,6 +54,7 @@ class ChallengeController extends Controller
         // Créer le challenge
         $challenge = Challenge::create([
             'unique_link' => $uniqueLink,
+            'access_code' => CodeGenerator::generateAccessCode('challenge'),
             'creator_name' => $validated['creator_name'],
             'creator_phone' => $validated['creator_phone'],
             'creator_amount' => $validated['creator_amount'],
@@ -88,7 +90,7 @@ class ChallengeController extends Controller
     {
         $validated = $request->validate([
             'participant_name' => 'required|string|max:255',
-            'participant_phone' => 'nullable|string|max:20|regex:/^[0-9]{12}$/',
+            'participant_phone' => 'nullable|string|max:20|regex:/^[0-9]{9,15}$/',
             'participant_amount' => 'required|integer|min:1',
         ]);
 

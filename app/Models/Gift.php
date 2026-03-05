@@ -13,6 +13,7 @@ class Gift extends Model
         "ref_one",
         "ref_two",
         "ref_three",
+        "access_code",
         "name",
         "amount",
         "sender_opertor",

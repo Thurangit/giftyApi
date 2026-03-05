@@ -18,7 +18,11 @@ class QuizAttempt extends Model
         'score',
         'won_amount',
         'has_won',
-        'status'
+        'status',
+        'receiver_operator',
+        'receiver_phone',
+        'receiver_name',
+        'receiver_email'
     ];
 
     public function quiz()

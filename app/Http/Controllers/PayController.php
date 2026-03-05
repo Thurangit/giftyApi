@@ -7,6 +7,7 @@ use App\Models\embassadors;
 use App\Models\embassadorsGift;
 use App\Models\Gift;
 use App\Models\GiftRef;
+use App\Helpers\CodeGenerator;
 use DateTime;
 use GuzzleHttp\Client;
 use Illuminate\Http\Request;
@@ -30,7 +31,8 @@ class PayController extends Controller
                 'amount' => 'required|integer|min:1',
                 'message' => 'required|string|max:4000',
                 'name' => 'nullable|string|max:100',
-                'phoneNumber' => 'required|string|regex:/^[0-9]{12}$/',
+                'email' => 'nullable|email|max:255',
+                'phoneNumber' => 'required|string|regex:/^[0-9]{9,15}$/',
                 'operator' => 'required|string|in:orange,mtn,operator3',
                 'promoCode' => 'nullable|string|max:100',
             ]
@@ -38,6 +40,7 @@ class PayController extends Controller
         $amount = $validated['amount'];
         $message = $validated['message'];
         $name = $validated['name'];
+        $email = isset($validated['email']) && !empty($validated['email']) ? $validated['email'] : null;
         $phoneNumber = $validated['phoneNumber'];
         $operator = $validated['operator'];
         $amountBenefit = 500;
@@ -145,6 +148,11 @@ class PayController extends Controller
         } // Exemple d'utilisation
         $transactionReference = generateTransactionReference();
 
+        // ============================================
+        // API DE PAIEMENT COMMENTÉE POUR TESTS
+        // ============================================
+        // TODO: Décommenter quand l'API de paiement Campay sera prête
+        /*
         $client = new Client();
         $maxRetries = 60; // 60 secondes
         $retryInterval = 1; // 1 seconde
@@ -175,60 +183,75 @@ class PayController extends Controller
 
             $responseBody = json_decode($response->getBody(), true);
             if (isset($responseBody['status']) && $responseBody['status'] === 'SUCCESSFUL') {
-                echo json_encode([
-                    'message' => 'Transaction réussie',
-                    'reference' => $responseBody['reference'],
-                    'amount' => $amount,
-                    'phoneNumber' => $phoneNumber,
-                    'operator' => $operator,
-                    'gift' => $transactionReference
-                ]);
-                //$data = $request->validate(['ref_one' => 'required|string|max:255', 'ref_two' => 'required|string|max:255', 'ref_three' => 'required|string|max:255', 'name' => 'required|string|max:255', 'amount' => 'required|integer', 'sender_opertor' => 'required|string|max:255', 'sender' => 'required|string|max:255', 'receiver_opertor' => 'required|string|max:255', 'receiver' => 'required|string|max:255', 'message' => 'nullable|string', 'image' => 'nullable|string|max:255', 'email' => 'required|string|email|max:255', 'commentaire' => 'nullable|string', 'other_one' => 'nullable|string|max:255', 'other_two' => 'nullable|string|max:255', 'status' => 'required|string|max:255',]); // Vérifier que ref_one est unique
-                $existingGift = Gift::where('ref_one', $transactionReference)->first();
-                if ($existingGift) {
-                    return response()->json(['error' => 'ref_one doit être unique'], 400);
-                } // Créer un nouvel enregistrement si ref_one est unique
-                try {
-                    $gift = Gift::create([
-                        'ref_one' => $responseBody['reference'],
-                        'ref_two' => $transactionReference,
-                        'name' => $name,
-                        'amount' => $amount,
-                        'sender' => $phoneNumber,
-                        'sender_opertor' => $operator,
-                        'message' => $message,
-                        'other_one' => $request->gift_,
-                        'status' => "Send"
+        */
+        
+        // Simulation de réponse API pour tests (à supprimer quand l'API sera prête)
+        $simulatedReference = 'CAMP-' . time() . '-' . rand(1000, 9999);
+        $responseBody = [
+            'status' => 'SUCCESSFUL',
+            'reference' => $simulatedReference
+        ];
+        
+        // Simuler le comportement de l'API de paiement
+        // Simuler un succès immédiat (remplace la boucle for et l'appel API)
+        //$data = $request->validate(['ref_one' => 'required|string|max:255', 'ref_two' => 'required|string|max:255', 'ref_three' => 'required|string|max:255', 'name' => 'required|string|max:255', 'amount' => 'required|integer', 'sender_opertor' => 'required|string|max:255', 'sender' => 'required|string|max:255', 'receiver_opertor' => 'required|string|max:255', 'receiver' => 'required|string|max:255', 'message' => 'nullable|string', 'image' => 'nullable|string|max:255', 'email' => 'required|string|email|max:255', 'commentaire' => 'nullable|string', 'other_one' => 'nullable|string|max:255', 'other_two' => 'nullable|string|max:255', 'status' => 'required|string|max:255',]); // Vérifier que ref_one est unique
+        $existingGift = Gift::where('ref_one', $transactionReference)->first();
+        if ($existingGift) {
+            return response()->json(['error' => 'ref_one doit être unique'], 400);
+        } // Créer un nouvel enregistrement si ref_one est unique
+        try {
+            $gift = Gift::create([
+                'ref_one' => $responseBody['reference'],
+                'ref_two' => $transactionReference,
+                'access_code' => CodeGenerator::generateAccessCode('gift'),
+                'name' => $name,
+                'amount' => $amount,
+                'sender' => $phoneNumber,
+                'sender_opertor' => $operator,
+                'message' => $message,
+                'email' => $email,
+                'other_one' => $request->gift_,
+                'status' => "Send"
+            ]);
+            $giftRef = GiftRef::create([
+                'ref' => $responseBody['reference'],
+                'amount' => $amount,
+                'status' => "Send"
+            ]);
+            $benefi = benefit::create([
+                'ref' => $responseBody['reference'],
+                'amount' => $amountBenefit - $embassor_amount,
+                'status' => "Send"
+            ]);
+            if (isset($promoCode) && $promoCode != null) {
+                $existPromo = embassadors::where('code', '=', $promoCode)->first();
+                if ($existPromo == null) {
+                    $promoAmount = 0;
+                } else {
+                    $add = embassadorsGift::create([
+                        'transaction' => $transactionReference,
+                        'code' => $promoCode,
+                        'amount' => $embassor_amount,
+                        'status' => 'Send'
                     ]);
-                    $giftRef = GiftRef::create([
-                        'ref' => $responseBody['reference'],
-                        'amount' => $amount,
-                        'status' => "Send"
-                    ]);
-                    $benefi = benefit::create([
-                        'ref' => $responseBody['reference'],
-                        'amount' => $amountBenefit - $embassor_amount,
-                        'status' => "Send"
-                    ]);
-                    if (isset($promoCode) && $promoCode != null) {
-                        $existPromo = embassadors::where('code', '=', $promoCode)->first();
-                        if ($existPromo == null) {
-                            $promoAmount = 0;
-                        } else {
-                            $add = embassadorsGift::create([
-                                'transaction' => $transactionReference,
-                                'code' => $promoCode,
-                                'amount' => $embassor_amount,
-                                'status' => 'Send'
-                            ]);
-                        }
-
-                    } else {
-                    }
-                } catch (\Exception $e) {
-                    return response()->json(['error' => 'Erreur lors de la création du cadeau'], 500);
                 }
-                break;
+
+            } else {
+            }
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Erreur lors de la création du cadeau'], 500);
+        }
+        
+        // Retourner la réponse de succès (simulation)
+        return response()->json([
+            'message' => 'Transaction réussie',
+            'reference' => $responseBody['reference'],
+            'amount' => $amount,
+            'phoneNumber' => $phoneNumber,
+            'operator' => $operator,
+            'gift' => $transactionReference
+        ]);
+            /*
             } elseif ($i == $maxRetries - 1) {
                 echo json_encode([
                     'message' => 'Transaction échouée ou en attente après 60 secondes',
@@ -238,6 +261,7 @@ class PayController extends Controller
 
             sleep($retryInterval); // Attend une seconde avant la prochaine tentative
         }
+        */
 
 
 

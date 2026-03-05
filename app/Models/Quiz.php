@@ -11,7 +11,9 @@ class Quiz extends Model
 
     protected $fillable = [
         'creator_name',
+        'creator_email',
         'unique_link',
+        'access_code',
         'total_questions',
         'required_correct',
         'total_amount',

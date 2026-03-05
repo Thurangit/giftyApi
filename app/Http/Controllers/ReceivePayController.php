@@ -27,7 +27,7 @@ class ReceivePayController extends Controller
                 'amount' => 'required|integer|min:1',
                 'message' => 'required|string|max:255',
                 'name' => 'nullable|string|max:100',
-                'phoneNumber' => 'required|string|regex:/^[0-9]{12}$/',
+                'phoneNumber' => 'required|string|regex:/^[0-9]{9,15}$/',
                 'operator' => 'required|string|in:orange,mtn,operator3', // Remplacer par les opérateurs valides
             ]
         ); // Les données sont maintenant validées et sécurisées
@@ -106,17 +106,17 @@ class ReceivePayController extends Controller
                         'amount' => $amount,
                         'sender' => $phoneNumber,
                         'sender_opertor' => $operator,
-                        'status' => "Delivery"
+                        'status' => "pending"
                     ]);
                     $giftRef = GiftRef::create([
                         'ref' => $responseBody['reference'],
                         'amount' => $amount,
-                        'status' => "Delivery"
+                        'status' => "pending"
                     ]);
                     $benefi = benefit::create([
                         'ref' => $responseBody['reference'],
                         'amount' => $amountBenefit,
-                        'status' => "Delivery"
+                        'status' => "pending"
                     ]);
                 } catch (\Exception $e) {
                     return response()->json(['error' => 'Erreur lors de la création du cadeau'], 500);
@@ -167,6 +167,12 @@ class ReceivePayController extends Controller
                         return vsprintf('%08s-%04s-%04x-%04x-%12s', str_split(bin2hex($data), 4));
                     } // Exemple d'utilisation
                     $uuid = generateUuid();
+                    
+                    // ============================================
+                    // API DE PAIEMENT COMMENTÉE POUR TESTS
+                    // ============================================
+                    // TODO: Décommenter quand l'API de paiement Campay sera prête
+                    /*
                     $client = new Client();
                     $maxRetries = 120; // 2 minutes (1 tentative par seconde)
                     $retryInterval = 1; // 1 seconde entre chaque tentative
@@ -193,22 +199,31 @@ class ReceivePayController extends Controller
 
                         // Si le statut est SUCCESSFUL, retournez immédiatement le succès
                         if (isset($responseBody['status']) && $responseBody['status'] === 'SUCCESSFUL') {
-
+                    */
+                    
+                    // Simulation de réponse API pour tests (à supprimer quand l'API sera prête)
+                    $responseBody = [
+                        'status' => 'SUCCESSFUL',
+                        'reference' => $uuid,
+                        'message' => 'Transaction réussie (simulation)'
+                    ];
+                    
+                    // Simuler le comportement de l'API de paiement - succès immédiat
                             $infoGift->update([
                                 'receiver_opertor' => $operator,
                                 'receiver' => $phoneNumber,
-                                'status' => 'Delivery'
+                                'status' => 'received'
                             ]);
                             $Gift_Ref->update([
-                                'status' => 'Delivery'
+                                'status' => 'received'
                             ]);
                             $Gift_App->update([
-                                'status' => 'Delivery'
+                                'status' => 'received'
                             ]);
 
                             return response()->json($responseBody, 200);
-                        }
 
+                    /*
                         // Si le statut est autre chose que PENDING, retournez l'erreur
                         if (isset($responseBody['status']) && $responseBody['status'] !== 'PENDING') {
                             return response()->json($responseBody, $response->getStatusCode());
@@ -223,6 +238,7 @@ class ReceivePayController extends Controller
                         'error' => 'Transaction en attente après 2 minutes',
                         'reference' => $ref
                     ], 408); // Code HTTP 408 pour Request Timeout
+                    */
                 }
             } else {
 
