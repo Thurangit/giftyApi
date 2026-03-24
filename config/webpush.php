@@ -16,7 +16,7 @@ return [
     |
     */
     'vapid' => [
-        'subject' => env('VAPID_SUBJECT', 'mailto:contact@yamo.cm'),
+        'subject' => env('VAPID_SUBJECT', 'mailto:contact@eyamo.cm'),
         'public_key' => env('VAPID_PUBLIC_KEY'),
         'private_key' => env('VAPID_PRIVATE_KEY'),
     ],

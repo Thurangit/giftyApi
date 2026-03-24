@@ -72,7 +72,7 @@ class AdminNotificationController extends Controller
                 'icon' => $request->icon ?: '/notification-icon.png',
                 'badge' => '/notification-badge.png',
                 'image' => $request->image,
-                'tag' => 'yamo-notification-' . time(),
+                'tag' => 'eyamo-notification-' . time(),
                 'requireInteraction' => $request->requireInteraction ?? false,
                 'data' => [
                     'url' => $request->url ?: '/'

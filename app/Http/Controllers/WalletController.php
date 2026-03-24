@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Helpers\EyamoUserResolver;
 use App\Models\WalletTransaction;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -77,11 +78,31 @@ class WalletController extends Controller
                 ], 401);
             }
 
-            $request->validate([
-                'amount' => 'required|numeric|min:0.01',
-                'phone_number' => 'required|string|regex:/^[0-9]{9,15}$/',
-                'operator' => 'required|in:orange,mtn',
-            ]);
+            $op = $request->input('operator');
+            $phoneForDesc = '';
+
+            if ($op === 'eyamo') {
+                $request->validate([
+                    'amount' => 'required|numeric|min:0.01',
+                    'operator' => 'required|in:eyamo',
+                    'eyamo_identifier' => 'required|string|max:255',
+                ]);
+                $resolved = EyamoUserResolver::resolve($request->eyamo_identifier);
+                if (! $resolved) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Compte Eyamo introuvable pour cet identifiant',
+                    ], 422);
+                }
+                $phoneForDesc = preg_replace('/\D/', '', (string) $resolved->phone);
+            } else {
+                $request->validate([
+                    'amount' => 'required|numeric|min:0.01',
+                    'phone_number' => 'required|string|regex:/^[0-9]{9,15}$/',
+                    'operator' => 'required|in:orange,mtn',
+                ]);
+                $phoneForDesc = preg_replace('/\D/', '', (string) $request->phone_number);
+            }
 
             $amount = $request->amount;
 
@@ -92,13 +113,15 @@ class WalletController extends Controller
                 ], 400);
             }
 
+            $descOp = $op === 'eyamo' ? 'Eyamo' : $request->operator;
+
             // Créer la transaction de retrait
             $transaction = WalletTransaction::create([
                 'user_id' => $user->id,
                 'type' => 'withdrawal',
                 'source_type' => 'manual',
                 'amount' => $amount,
-                'description' => 'Retrait vers ' . $request->operator . ' (' . $request->phone_number . ')',
+                'description' => 'Retrait vers ' . $descOp . ' (' . $phoneForDesc . ')',
                 'status' => 'pending',
             ]);
 

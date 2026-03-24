@@ -8,6 +8,7 @@ use App\Models\GiftRef;
 use DateTime;
 use Illuminate\Http\Request;
 use GuzzleHttp\Client;
+use App\Support\LinkUnavailable;
 
 class ReceivePayController extends Controller
 {
@@ -16,8 +17,21 @@ class ReceivePayController extends Controller
      */
     public function infoGift($ref)
     {
-        $infos = Gift::where("ref_two", '=', $ref)->first();
-        return response()->json($infos);
+        $gift = Gift::where('ref_two', '=', $ref)->first();
+
+        if (! $gift) {
+            return LinkUnavailable::response(LinkUnavailable::DELETED, 404);
+        }
+
+        if ($gift->status === 'cancelled') {
+            return LinkUnavailable::response(LinkUnavailable::CANCELLED, 410);
+        }
+
+        if (in_array($gift->status, ['received', 'completed'], true)) {
+            return LinkUnavailable::response(LinkUnavailable::ALREADY_WON, 410);
+        }
+
+        return response()->json($gift);
     }
     public function sendMoney(Request $request)
     {

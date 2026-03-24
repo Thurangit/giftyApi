@@ -72,6 +72,8 @@ Route::get('/quiz/result/{attemptId}', [App\Http\Controllers\QuizController::cla
 Route::get('/quiz/{link}', [App\Http\Controllers\QuizController::class, 'getQuiz'])->name('quiz_get');
 Route::get('/quiz/{link}/share', [App\Http\Controllers\QuizController::class, 'getQuizShareInfo'])->name('quiz_share_info');
 Route::post('/quiz/{link}/check-access', [App\Http\Controllers\QuizController::class, 'checkAccess'])->name('quiz_check_access');
+Route::post('/quiz/{link}/challenge/join', [App\Http\Controllers\QuizController::class, 'joinChallenge'])->name('quiz_challenge_join');
+Route::post('/quiz/{link}/challenge/creator-withdraw', [App\Http\Controllers\QuizController::class, 'withdrawChallengePot'])->name('quiz_challenge_creator_withdraw');
 Route::post('/quiz/{link}/submit', [App\Http\Controllers\QuizController::class, 'submitQuiz'])->name('quiz_submit');
 Route::post('/quiz/withdraw-prize', [App\Http\Controllers\QuizController::class, 'withdrawQuizPrize'])->name('quiz_withdraw_prize');
 
@@ -92,6 +94,14 @@ Route::post('/challenge/{link}/join', [App\Http\Controllers\ChallengeController:
 Route::post('/challenge/{link}/select-questions', [App\Http\Controllers\ChallengeController::class, 'selectQuestions'])->name('challenge_select_questions');
 Route::post('/challenge/{link}/questions', [App\Http\Controllers\ChallengeController::class, 'getQuestionsToAnswer'])->name('challenge_get_questions');
 Route::post('/challenge/{link}/submit-answers', [App\Http\Controllers\ChallengeController::class, 'submitAnswers'])->name('challenge_submit_answers');
+
+// MyMind routes
+Route::post('/mymind/create',            [App\Http\Controllers\MyMindController::class, 'createGame'])->name('mymind_create');
+Route::get('/mymind/{link}',             [App\Http\Controllers\MyMindController::class, 'getGame'])->name('mymind_get');
+Route::post('/mymind/{link}/challenge/join', [App\Http\Controllers\MyMindController::class, 'joinChallenge'])->name('mymind_challenge_join');
+Route::post('/mymind/{link}/challenge/creator-withdraw', [App\Http\Controllers\MyMindController::class, 'withdrawChallengePot'])->name('mymind_challenge_creator_withdraw');
+Route::post('/mymind/{link}/submit',     [App\Http\Controllers\MyMindController::class, 'submitAnswers'])->name('mymind_submit');
+Route::post('/mymind/withdraw-prize',    [App\Http\Controllers\MyMindController::class, 'withdrawPrize'])->name('mymind_withdraw_prize');
 
 // ============================================
 // Routes utilisateur - Cadeaux

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Helpers\CodeGenerator;
+use App\Helpers\EyamoUserResolver;
 use App\Models\AdminSetting;
 use App\Notifications\AccountDuplicateAttemptNotification;
 use Illuminate\Http\Request;
@@ -106,6 +107,7 @@ class AuthController extends Controller
 
             // Générer un code de parrainage unique pour le nouvel utilisateur
             $referralCode = CodeGenerator::generateReferralCode();
+            $eyamoCode = CodeGenerator::generateEyamoUserCode();
 
             // Créer l'utilisateur avec l'email en minuscules
             $user = User::create([
@@ -118,6 +120,7 @@ class AuthController extends Controller
                 'role' => 'user',
                 'referral_code' => $referralCode,
                 'referred_by' => $referredBy,
+                'eyamo_code' => $eyamoCode,
             ]);
 
             // Créer le token d'authentification
@@ -139,6 +142,7 @@ class AuthController extends Controller
                     'status' => $user->status,
                     'role' => $user->role,
                     'referral_code' => $user->referral_code,
+                    'eyamo_code' => $user->eyamo_code,
                 ],
                 'token' => $token
             ], 201);
@@ -172,13 +176,19 @@ class AuthController extends Controller
                 ], 422);
             }
 
-            $identifier = $request->identifier;
+            $identifier = trim($request->identifier);
             
-            // Chercher l'utilisateur par email (insensible à la casse) ou par téléphone
-            $user = User::where(function ($query) use ($identifier) {
-                $query->whereRaw('LOWER(email) = ?', [strtolower($identifier)])
-                      ->orWhere('phone', $identifier);
-            })->first();
+            // Chercher l'utilisateur par email, téléphone ou code Eyamo (E##-#######)
+            $user = null;
+            if (preg_match('/^E[A-Za-z]{2}-\d{7}$/', $identifier)) {
+                $user = EyamoUserResolver::resolve($identifier);
+            }
+            if (!$user) {
+                $user = User::where(function ($query) use ($identifier) {
+                    $query->whereRaw('LOWER(email) = ?', [strtolower($identifier)])
+                          ->orWhere('phone', $identifier);
+                })->first();
+            }
 
             if (!$user) {
                 return response()->json([
@@ -203,6 +213,11 @@ class AuthController extends Controller
                 ], 403);
             }
 
+            if (empty($user->eyamo_code)) {
+                $user->eyamo_code = CodeGenerator::generateEyamoUserCode();
+                $user->save();
+            }
+
             // Créer le token d'authentification
             $token = $user->createToken('auth_token')->plainTextToken;
 
@@ -222,6 +237,7 @@ class AuthController extends Controller
                     'status' => $user->status,
                     'role' => $user->role,
                     'referral_code' => $user->referral_code,
+                    'eyamo_code' => $user->eyamo_code,
                 ],
                 'token' => $token
             ]);
@@ -262,6 +278,11 @@ class AuthController extends Controller
         try {
             $user = $request->user();
 
+            if (empty($user->eyamo_code)) {
+                $user->eyamo_code = CodeGenerator::generateEyamoUserCode();
+                $user->save();
+            }
+
             // Construire l'URL complète de l'avatar si elle existe
             $avatarUrl = $user->avatar;
             if ($user->avatar && !filter_var($user->avatar, FILTER_VALIDATE_URL)) {
@@ -284,6 +305,7 @@ class AuthController extends Controller
                     'status' => $user->status,
                     'role' => $user->role,
                     'referral_code' => $user->referral_code,
+                    'eyamo_code' => $user->eyamo_code,
                     'created_at' => $user->created_at,
                 ]
             ]);

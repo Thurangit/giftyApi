@@ -9,6 +9,7 @@ use App\Helpers\CodeGenerator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
+use App\Support\LinkUnavailable;
 
 class MomentController extends Controller
 {
@@ -96,15 +97,24 @@ class MomentController extends Controller
     public function getMoment($link)
     {
         $moment = Moment::where('unique_link', $link)
-            ->where('status', 'active')
             ->with(['items'])
             ->first();
 
-        if (!$moment) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Moment non trouvé ou inactif'
-            ], 404);
+        if (! $moment) {
+            return LinkUnavailable::response(LinkUnavailable::DELETED, 404);
+        }
+
+        if ($moment->status === 'cancelled') {
+            return LinkUnavailable::response(LinkUnavailable::CANCELLED, 410);
+        }
+        if ($moment->status === 'expired') {
+            return LinkUnavailable::response(LinkUnavailable::EXPIRED, 410);
+        }
+        if ($moment->status === 'completed') {
+            return LinkUnavailable::response(LinkUnavailable::ALREADY_WON, 410);
+        }
+        if ($moment->status !== 'active') {
+            return LinkUnavailable::response(LinkUnavailable::CLOSED, 410);
         }
 
         // Randomiser l'ordre des moments à chaque fois pour éviter que le meilleur soit toujours au même endroit
@@ -144,11 +154,21 @@ class MomentController extends Controller
             ->select('id', 'unique_link', 'access_code', 'creator_name', 'creator_email', 'amount', 'status', 'created_at')
             ->first();
 
-        if (!$moment) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Moment non trouvé'
-            ], 404);
+        if (! $moment) {
+            return LinkUnavailable::response(LinkUnavailable::DELETED, 404);
+        }
+
+        if ($moment->status === 'cancelled') {
+            return LinkUnavailable::response(LinkUnavailable::CANCELLED, 410);
+        }
+        if ($moment->status === 'expired') {
+            return LinkUnavailable::response(LinkUnavailable::EXPIRED, 410);
+        }
+        if ($moment->status === 'completed') {
+            return LinkUnavailable::response(LinkUnavailable::ALREADY_WON, 410);
+        }
+        if ($moment->status !== 'active') {
+            return LinkUnavailable::response(LinkUnavailable::CLOSED, 410);
         }
 
         return response()->json([
@@ -166,15 +186,22 @@ class MomentController extends Controller
             'phone' => 'nullable|string'
         ]);
 
-        $moment = Moment::where('unique_link', $link)
-            ->where('status', 'active')
-            ->first();
+        $moment = Moment::where('unique_link', $link)->first();
 
-        if (!$moment) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Moment non trouvé ou inactif'
-            ], 404);
+        if (! $moment) {
+            return LinkUnavailable::response(LinkUnavailable::DELETED, 404);
+        }
+        if ($moment->status === 'cancelled') {
+            return LinkUnavailable::response(LinkUnavailable::CANCELLED, 410);
+        }
+        if ($moment->status === 'expired') {
+            return LinkUnavailable::response(LinkUnavailable::EXPIRED, 410);
+        }
+        if ($moment->status === 'completed') {
+            return LinkUnavailable::response(LinkUnavailable::ALREADY_WON, 410);
+        }
+        if ($moment->status !== 'active') {
+            return LinkUnavailable::response(LinkUnavailable::CLOSED, 410);
         }
 
         // Si un numéro de téléphone est requis (participant_phone n'est pas null)
@@ -242,15 +269,22 @@ class MomentController extends Controller
             ], 422);
         }
 
-        $moment = Moment::where('unique_link', $link)
-            ->where('status', 'active')
-            ->first();
+        $moment = Moment::where('unique_link', $link)->first();
 
-        if (!$moment) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Moment non trouvé ou inactif'
-            ], 404);
+        if (! $moment) {
+            return LinkUnavailable::response(LinkUnavailable::DELETED, 404);
+        }
+        if ($moment->status === 'cancelled') {
+            return LinkUnavailable::response(LinkUnavailable::CANCELLED, 410);
+        }
+        if ($moment->status === 'expired') {
+            return LinkUnavailable::response(LinkUnavailable::EXPIRED, 410);
+        }
+        if ($moment->status === 'completed') {
+            return LinkUnavailable::response(LinkUnavailable::ALREADY_WON, 410);
+        }
+        if ($moment->status !== 'active') {
+            return LinkUnavailable::response(LinkUnavailable::CLOSED, 410);
         }
 
         // Si un numéro de téléphone est requis pour ce moment
@@ -333,18 +367,12 @@ class MomentController extends Controller
             $attempt = MomentAttempt::with(['moment.items'])
                 ->find($attemptId);
 
-            if (!$attempt) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Tentative non trouvée'
-                ], 404);
+            if (! $attempt) {
+                return LinkUnavailable::response(LinkUnavailable::DELETED, 404);
             }
 
-            if (!$attempt->moment) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Moment associé non trouvé'
-                ], 404);
+            if (! $attempt->moment) {
+                return LinkUnavailable::response(LinkUnavailable::DELETED, 404);
             }
 
             // Trouver le meilleur moment

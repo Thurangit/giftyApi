@@ -12,6 +12,7 @@ use App\Helpers\CodeGenerator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
+use App\Support\LinkUnavailable;
 
 class ChallengeController extends Controller
 {
@@ -169,11 +170,15 @@ class ChallengeController extends Controller
             ->with(['participants'])
             ->first();
 
-        if (!$challenge) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Challenge non trouvé'
-            ], 404);
+        if (! $challenge) {
+            return LinkUnavailable::response(LinkUnavailable::DELETED, 404);
+        }
+
+        if ($challenge->status === 'cancelled') {
+            return LinkUnavailable::response(LinkUnavailable::CANCELLED, 410);
+        }
+        if ($challenge->status === 'completed') {
+            return LinkUnavailable::response(LinkUnavailable::ALREADY_WON, 410);
         }
 
         return response()->json([
@@ -547,11 +552,8 @@ class ChallengeController extends Controller
             $result = ChallengeResult::with(['challenge.participants', 'winner'])
                 ->find($resultId);
 
-            if (!$result) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Résultat non trouvé'
-                ], 404);
+            if (! $result) {
+                return LinkUnavailable::response(LinkUnavailable::DELETED, 404);
             }
 
             $challenge = $result->challenge;

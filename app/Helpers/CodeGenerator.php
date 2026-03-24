@@ -64,9 +64,27 @@ class CodeGenerator
                 return Challenge::where('access_code', $code)->exists();
             case 'referral':
                 return User::where('referral_code', $code)->exists();
+            case 'eyamo_user':
+                return User::where('eyamo_code', $code)->exists();
             default:
                 return false;
         }
+    }
+
+    /**
+     * Code utilisateur Eyamo : E + 2 lettres A-Z + tiret + 7 chiffres (ex: EKZ-1234567).
+     */
+    public static function generateEyamoUserCode(): string
+    {
+        do {
+            $a = chr(65 + random_int(0, 25));
+            $b = chr(65 + random_int(0, 25));
+            $numbers = str_pad((string) random_int(0, 9999999), 7, '0', STR_PAD_LEFT);
+            $code = 'E' . $a . $b . '-' . $numbers;
+            $exists = self::codeExists($code, 'eyamo_user');
+        } while ($exists);
+
+        return $code;
     }
 
     /**

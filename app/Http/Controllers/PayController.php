@@ -8,6 +8,7 @@ use App\Models\embassadorsGift;
 use App\Models\Gift;
 use App\Models\GiftRef;
 use App\Helpers\CodeGenerator;
+use App\Helpers\EyamoUserResolver;
 use DateTime;
 use GuzzleHttp\Client;
 use Illuminate\Http\Request;
@@ -25,24 +26,52 @@ class PayController extends Controller
 
     public function sendMoney(Request $request)
     {
+        $opIn = $request->input('operator');
 
-        $validated = $request->validate(
-            [
+        if ($opIn === 'eyamo') {
+            $validated = $request->validate([
                 'amount' => 'required|integer|min:1',
                 'message' => 'required|string|max:4000',
                 'name' => 'nullable|string|max:100',
                 'email' => 'nullable|email|max:255',
-                'phoneNumber' => 'required|string|regex:/^[0-9]{9,15}$/',
-                'operator' => 'required|string|in:orange,mtn,operator3',
+                'operator' => 'required|string|in:eyamo',
+                'eyamo_identifier' => 'required|string|max:255',
                 'promoCode' => 'nullable|string|max:100',
-            ]
-        ); // Les données sont maintenant validées et sécurisées
+            ]);
+            $eyamoUser = EyamoUserResolver::resolve($validated['eyamo_identifier']);
+            if (! $eyamoUser) {
+                return response()->json([
+                    'message' => 'Compte Eyamo introuvable. Utilisez votre code E##-#######, email ou numéro enregistré.',
+                ], 422);
+            }
+            $rawPhone = preg_replace('/\D/', '', (string) $eyamoUser->phone);
+            if ($rawPhone === '' || strlen($rawPhone) < 9) {
+                return response()->json([
+                    'message' => 'Ce compte Eyamo ne dispose pas d\'un numéro de téléphone valide pour le paiement.',
+                ], 422);
+            }
+            $phoneNumber = $rawPhone;
+            $operator = 'eyamo';
+        } else {
+            $validated = $request->validate(
+                [
+                    'amount' => 'required|integer|min:1',
+                    'message' => 'required|string|max:4000',
+                    'name' => 'nullable|string|max:100',
+                    'email' => 'nullable|email|max:255',
+                    'phoneNumber' => 'required|string|regex:/^[0-9]{9,15}$/',
+                    'operator' => 'required|string|in:orange,mtn,operator3',
+                    'promoCode' => 'nullable|string|max:100',
+                ]
+            );
+            $phoneNumber = $validated['phoneNumber'];
+            $operator = $validated['operator'];
+        }
+
         $amount = $validated['amount'];
         $message = $validated['message'];
-        $name = $validated['name'];
-        $email = isset($validated['email']) && !empty($validated['email']) ? $validated['email'] : null;
-        $phoneNumber = $validated['phoneNumber'];
-        $operator = $validated['operator'];
+        $name = $validated['name'] ?? null;
+        $email = isset($validated['email']) && ! empty($validated['email']) ? $validated['email'] : null;
         $amountBenefit = 500;
         $promoCode = $validated['promoCode'];
         $promoAmount = 0;
@@ -133,11 +162,12 @@ class PayController extends Controller
         }
 
 
-        if ($operator == 'orange') {
+        if ($operator === 'orange') {
             $operator = 'OM';
-        }
-        if ($operator == 'mtn') {
+        } elseif ($operator === 'mtn') {
             $operator = 'MOMO';
+        } elseif ($operator === 'eyamo') {
+            $operator = 'EYAMO';
         }
         function generateTransactionReference()
         { // Obtenir la date et l'heure actuelles
@@ -249,7 +279,8 @@ class PayController extends Controller
             'amount' => $amount,
             'phoneNumber' => $phoneNumber,
             'operator' => $operator,
-            'gift' => $transactionReference
+            'gift' => $transactionReference,
+            'access_code' => $gift->access_code,
         ]);
             /*
             } elseif ($i == $maxRetries - 1) {
