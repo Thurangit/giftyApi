@@ -9,8 +9,9 @@ use App\Services\WebPushService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\DB;
+use App\Support\PhoneNormalizer;
+use Illuminate\Support\Facades\Http;
 use App\Support\LinkUnavailable;
 
 class MyMindController extends Controller
@@ -61,7 +62,9 @@ class MyMindController extends Controller
             }
 
             $uniqueLink = 'mm-' . Str::random(32);
-            $accessCode = strtoupper(substr(md5(uniqid(mt_rand(), true)), 0, 8));
+            do {
+                $accessCode = 'MM-' . str_pad((string) random_int(0, 9999999), 7, '0', STR_PAD_LEFT);
+            } while (MyMindGame::where('access_code', $accessCode)->exists());
 
             // Extract ordered question IDs from answers
             $questionIds = array_column($validated['answers'], 'question_id');
@@ -128,6 +131,15 @@ class MyMindController extends Controller
                 }
 
                 $phone = $this->normalizeChallengePhone($request->query('participant_phone'));
+                if ($phone !== '') {
+                    $alreadyFinished = MyMindChallengeEntry::where('mymind_game_id', $game->id)
+                        ->where('participant_phone', $phone)
+                        ->where('status', 'completed')
+                        ->exists();
+                    if ($alreadyFinished) {
+                        return LinkUnavailable::response(LinkUnavailable::ALREADY_PLAYED, 410);
+                    }
+                }
                 $canPlay = false;
                 if ($phone !== '') {
                     $canPlay = MyMindChallengeEntry::where('mymind_game_id', $game->id)
@@ -185,7 +197,7 @@ class MyMindController extends Controller
             }
 
             if ($game->status === 'completed') {
-                return LinkUnavailable::response(LinkUnavailable::ALREADY_WON, 410);
+                return LinkUnavailable::response(LinkUnavailable::ALREADY_PLAYED, 410);
             }
             if ($game->status === 'cancelled') {
                 return LinkUnavailable::response(LinkUnavailable::CANCELLED, 410);
@@ -284,7 +296,9 @@ class MyMindController extends Controller
             return response()->json(['success' => false, 'message' => 'Challenge introuvable.'], 404);
         }
 
-        if (strtoupper(trim($validated['access_code'])) !== strtoupper((string) $game->access_code)) {
+        $inputCode = strtoupper(preg_replace('/\s+/', '', trim($validated['access_code'])));
+        $storedCode = strtoupper(preg_replace('/\s+/', '', (string) $game->access_code));
+        if ($inputCode !== $storedCode) {
             return response()->json(['success' => false, 'message' => 'Code d\'accès invalide.'], 403);
         }
 
@@ -330,7 +344,7 @@ class MyMindController extends Controller
             }
 
             if (! $game->challenge_mode && $game->status === 'completed') {
-                return LinkUnavailable::response(LinkUnavailable::ALREADY_WON, 410);
+                return LinkUnavailable::response(LinkUnavailable::ALREADY_PLAYED, 410);
             }
             if ($game->status === 'cancelled') {
                 return LinkUnavailable::response(LinkUnavailable::CANCELLED, 410);
@@ -350,19 +364,21 @@ class MyMindController extends Controller
                 'partner_operator'  => 'nullable|string',
             ]);
 
-            $normPhone = $this->normalizeChallengePhone($validated['partner_phone'] ?? '');
+            $normPhone = PhoneNormalizer::normalizeCm($validated['partner_phone'] ?? '');
             $challengeEntry = null;
             if ($game->challenge_mode) {
                 if ($normPhone === '') {
                     return response()->json(['success' => false, 'message' => 'Numéro requis pour le challenge.'], 422);
                 }
                 $challengeEntry = MyMindChallengeEntry::where('mymind_game_id', $game->id)
-                    ->where('participant_phone', $normPhone)
                     ->where('status', 'paid')
-                    ->first();
+                    ->get()
+                    ->first(fn ($e) => PhoneNormalizer::same($e->participant_phone, $normPhone));
                 if (! $challengeEntry) {
                     return response()->json(['success' => false, 'message' => 'Payez votre mise pour jouer.'], 403);
                 }
+            } elseif ($normPhone === '') {
+                return response()->json(['success' => false, 'message' => 'Numéro de téléphone requis pour identifier votre participation.'], 422);
             }
 
             // Compare answers
@@ -390,12 +406,13 @@ class MyMindController extends Controller
                 ];
             }
 
-            $total     = count($partnerAnswers);
-            $won       = ($score === $total && $total > 0);
+            $total = count($partnerAnswers);
+            // Gagner avec au moins 70 % de bonnes réponses (arrondi côté entiers : score*100 >= 70*total)
+            $won = ($total > 0 && ($score * 100) >= (70 * $total));
 
             $attempt = MyMindAttempt::create([
                 'mymind_game_id'  => $game->id,
-                'partner_phone'   => $normPhone !== '' ? $normPhone : ($validated['partner_phone'] ?? null),
+                'partner_phone'   => $normPhone !== '' ? $normPhone : null,
                 'partner_operator'=> $validated['partner_operator'] ?? null,
                 'answers'         => $validated['answers'],
                 'score'           => $score,
@@ -466,54 +483,65 @@ class MyMindController extends Controller
         try {
             $validated = $request->validate([
                 'attempt_id' => 'required|integer',
-                'phone'      => 'required|string',
-                'operator'   => 'required|string|in:orange,mtn',
+                'phone' => 'required|string',
+                'operator' => 'required|string|in:orange,mtn',
+                'identity_phone' => 'required|string',
             ]);
 
-            $attempt = MyMindAttempt::with('game')->find($validated['attempt_id']);
+            $payoutPhone = preg_replace('/[^\d]/', '', $validated['phone']);
 
-            if (!$attempt) {
-                return response()->json(['success' => false, 'message' => 'Tentative introuvable.'], 404);
-            }
+            return DB::transaction(function () use ($validated, $payoutPhone) {
+                $attempt = MyMindAttempt::with('game')->where('id', $validated['attempt_id'])->lockForUpdate()->first();
 
-            if (!$attempt->won) {
-                return response()->json(['success' => false, 'message' => 'Vous n\'avez pas gagné ce jeu.'], 403);
-            }
+                if (! $attempt) {
+                    return response()->json(['success' => false, 'message' => 'Tentative introuvable.'], 404);
+                }
 
-            if ($attempt->prize_withdrawn) {
-                return response()->json(['success' => false, 'message' => 'Le gain a déjà été retiré.'], 400);
-            }
+                if (! PhoneNormalizer::same($validated['identity_phone'], $attempt->partner_phone)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Le numéro ne correspond pas à celui utilisé pour jouer.',
+                    ], 403);
+                }
 
-            // Send payout via the existing payment gateway
-            $game   = $attempt->game;
-            $amount = (int) ($attempt->won_amount ?? $game->final_amount);
-            if ($amount < 1) {
-                return response()->json(['success' => false, 'message' => 'Montant de gain invalide.'], 400);
-            }
-            $phone  = preg_replace('/[^\d]/', '', $validated['phone']);
+                if (! $attempt->won) {
+                    return response()->json(['success' => false, 'message' => 'Vous n\'avez pas gagné ce jeu.'], 403);
+                }
 
-            $disbursement = Http::timeout(60)->post(
-                config('app.payment_gateway_url', 'http://localhost:8000') . '/api/receive/money',
-                [
-                    'amount'    => $amount,
-                    'phone'     => $phone,
-                    'operator'  => $validated['operator'],
-                    'reference' => 'mymind-' . $attempt->id,
-                    'reason'    => 'Gain MyMind — ' . $game->creator_name,
-                ]
-            );
+                if ($attempt->prize_withdrawn) {
+                    return response()->json(['success' => false, 'message' => 'Le gain a déjà été retiré.'], 400);
+                }
 
-            if ($disbursement->successful() && ($disbursement->json('success') ?? false)) {
-                $attempt->update([
-                    'prize_withdrawn'  => true,
-                    'payment_reference'=> $disbursement->json('reference') ?? null,
-                    'partner_phone'    => $phone,
-                    'partner_operator' => $validated['operator'],
-                ]);
-                return response()->json(['success' => true, 'message' => 'Gain retiré avec succès !']);
-            }
+                $game = $attempt->game;
+                $amount = (int) ($attempt->won_amount ?? $game->final_amount);
+                if ($amount < 1) {
+                    return response()->json(['success' => false, 'message' => 'Montant de gain invalide.'], 400);
+                }
 
-            return response()->json(['success' => false, 'message' => 'Échec du retrait. Réessayez.'], 400);
+                $disbursement = Http::timeout(60)->post(
+                    config('app.payment_gateway_url', 'http://localhost:8000') . '/api/receive/money',
+                    [
+                        'amount' => $amount,
+                        'phone' => $payoutPhone,
+                        'operator' => $validated['operator'],
+                        'reference' => 'mymind-' . $attempt->id,
+                        'reason' => 'Gain MyMind — ' . $game->creator_name,
+                    ]
+                );
+
+                if ($disbursement->successful() && ($disbursement->json('success') ?? false)) {
+                    $attempt->update([
+                        'prize_withdrawn' => true,
+                        'payment_reference' => $disbursement->json('reference') ?? null,
+                        'payout_phone' => $payoutPhone,
+                        'payout_operator' => $validated['operator'],
+                    ]);
+
+                    return response()->json(['success' => true, 'message' => 'Gain retiré avec succès !']);
+                }
+
+                return response()->json(['success' => false, 'message' => 'Échec du retrait. Réessayez.'], 400);
+            });
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json(['success' => false, 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {

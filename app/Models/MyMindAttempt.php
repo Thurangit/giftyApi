@@ -15,6 +15,8 @@ class MyMindAttempt extends Model
         'mymind_game_id',
         'partner_phone',
         'partner_operator',
+        'payout_phone',
+        'payout_operator',
         'answers',
         'score',
         'total_questions',

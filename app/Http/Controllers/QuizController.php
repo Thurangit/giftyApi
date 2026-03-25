@@ -16,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 use App\Support\LinkUnavailable;
+use App\Support\PhoneNormalizer;
 
 class QuizController extends Controller
 {
@@ -33,6 +34,7 @@ class QuizController extends Controller
             $validated = $request->validate([
                 'creator_name' => 'required|string|max:255',
                 'creator_email' => 'nullable|email|max:255',
+                'creator_phone' => 'nullable|string|max:32',
                 'total_questions' => 'required|integer|in:5,10,15,20,50,100',
                 'required_correct' => 'required|integer|min:1',
                 'final_amount' => 'nullable|integer|min:0',
@@ -89,9 +91,13 @@ class QuizController extends Controller
             $uniqueLink = 'quiz-' . Str::random(32);
 
             // Créer le quiz
+            $creatorPhone = isset($validated['creator_phone'])
+                ? PhoneNormalizer::normalizeCm($validated['creator_phone'])
+                : '';
             $quiz = Quiz::create([
                 'creator_name' => $validated['creator_name'],
                 'creator_email' => $validated['creator_email'] ?? null,
+                'creator_phone' => $creatorPhone !== '' ? $creatorPhone : null,
                 'unique_link' => $uniqueLink,
                 'access_code' => CodeGenerator::generateAccessCode('quiz'),
                 'total_questions' => $validated['total_questions'],
@@ -458,7 +464,8 @@ class QuizController extends Controller
                 'success' => false,
                 'message' => 'Vous avez déjà participé à ce quiz',
                 'can_access' => false,
-                'already_participated' => true
+                'already_participated' => true,
+                'attempt_id' => $existingAttempt->id,
             ], 403);
         }
 
@@ -752,7 +759,10 @@ class QuizController extends Controller
                     'required_percentage' => round($requiredPercentage, 2),
                     'has_won' => (bool) ($attempt->has_won ?? false),
                     'won_amount' => (float) ($attempt->won_amount ?? 0),
-                    'answers' => $answers
+                    'answers' => $answers,
+                    'participant_phone_last4' => ($attempt->has_won && $attempt->participant_phone)
+                        ? substr(PhoneNormalizer::normalizeCm($attempt->participant_phone), -4)
+                        : null,
                 ]
             ]);
         } catch (\Exception $e) {
@@ -769,6 +779,104 @@ class QuizController extends Controller
     }
 
     /**
+     * Statut pour un participant (reprise après coupure, quiz déjà terminé, etc.).
+     * Ne remplace pas checkAccess pour un quiz encore ouvert.
+     */
+    public function participantOutcome(Request $request, $link)
+    {
+        $validated = $request->validate([
+            'participant_phone' => 'required|string',
+        ]);
+
+        $norm = PhoneNormalizer::normalizeCm($validated['participant_phone']);
+        if ($norm === '') {
+            return response()->json(['success' => false, 'message' => 'Numéro invalide'], 422);
+        }
+
+        $quiz = Quiz::where('unique_link', $link)->with('attempts')->first();
+        if (! $quiz) {
+            return LinkUnavailable::response(LinkUnavailable::DELETED, 404);
+        }
+
+        if ($quiz->challenge_mode) {
+            return response()->json([
+                'success' => true,
+                'outcome' => 'challenge_use_standard_flow',
+                'message' => 'Utilisez le flux challenge habituel.',
+            ]);
+        }
+
+        if ($quiz->status === 'cancelled') {
+            return response()->json(['success' => true, 'outcome' => 'cancelled']);
+        }
+
+        $attemptForPhone = $quiz->attempts
+            ->first(fn ($a) => PhoneNormalizer::same($a->participant_phone, $norm));
+
+        $winnerAttempt = $quiz->attempts->where('has_won', true)->first();
+
+        if ($quiz->status === 'completed') {
+            if ($winnerAttempt && PhoneNormalizer::same($winnerAttempt->participant_phone, $norm)) {
+                if ($winnerAttempt->status === 'withdrawn') {
+                    return response()->json([
+                        'success' => true,
+                        'outcome' => 'winner_withdrawn',
+                        'attempt_id' => $winnerAttempt->id,
+                    ]);
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'outcome' => 'winner_resume_withdrawal',
+                    'attempt_id' => $winnerAttempt->id,
+                ]);
+            }
+            if ($attemptForPhone && ! $attemptForPhone->has_won) {
+                return response()->json([
+                    'success' => true,
+                    'outcome' => 'played_lost',
+                    'attempt_id' => $attemptForPhone->id,
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'outcome' => 'won_by_other',
+                'message' => 'Ce quiz a déjà été gagné par un autre participant.',
+            ]);
+        }
+
+        if ($attemptForPhone) {
+            if ($attemptForPhone->has_won) {
+                if ($attemptForPhone->status === 'withdrawn') {
+                    return response()->json([
+                        'success' => true,
+                        'outcome' => 'winner_withdrawn',
+                        'attempt_id' => $attemptForPhone->id,
+                    ]);
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'outcome' => 'winner_resume_withdrawal',
+                    'attempt_id' => $attemptForPhone->id,
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'outcome' => 'played_lost',
+                'attempt_id' => $attemptForPhone->id,
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'outcome' => 'can_play',
+        ]);
+    }
+
+    /**
      * Retirer le gain d'un quiz
      */
     public function withdrawQuizPrize(Request $request)
@@ -776,6 +884,7 @@ class QuizController extends Controller
         $request->validate([
             'attemptId' => 'required|integer|exists:quiz_attempts,id',
             'amount' => 'required|integer|min:1',
+            'participant_phone' => 'required|string',
         ]);
 
         $isEyamo = $request->input('paymentMethod') === 'Eyamo'
@@ -826,69 +935,68 @@ class QuizController extends Controller
                 $operator = $request->input('operator');
             }
 
-            $attempt = QuizAttempt::with('quiz')->find($attemptId);
-            
-            if (!$attempt) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Tentative de quiz non trouvée'
-                ], 404);
-            }
+            $identityPhone = $request->input('participant_phone');
 
-            if (!$attempt->has_won) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Vous n\'avez pas gagné ce quiz'
-                ], 400);
-            }
+            $response = DB::transaction(function () use ($request, $attemptId, $amount, $operator, $phoneNumber, $identityPhone) {
+                $attempt = QuizAttempt::where('id', $attemptId)->lockForUpdate()->first();
 
-            if ($attempt->status === 'withdrawn') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Le gain a déjà été retiré'
-                ], 400);
-            }
+                if (! $attempt) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Tentative de quiz non trouvée',
+                    ], 404);
+                }
 
-            if ($attempt->won_amount != $amount) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Le montant ne correspond pas au gain'
-                ], 400);
-            }
+                if (! PhoneNormalizer::same($identityPhone, $attempt->participant_phone)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Le numéro ne correspond pas à celui utilisé lors du quiz. Utilisez le même numéro de participation.',
+                    ], 403);
+                }
 
-            // Simuler le retrait (même logique que pour les cadeaux)
-            function generateUuid()
-            {
+                if (! $attempt->has_won) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Vous n\'avez pas gagné ce quiz',
+                    ], 400);
+                }
+
+                if ($attempt->status === 'withdrawn') {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Le gain a déjà été retiré',
+                    ], 400);
+                }
+
+                if ((int) $attempt->won_amount !== $amount) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Le montant ne correspond pas au gain',
+                    ], 400);
+                }
+
                 $data = random_bytes(16);
                 $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
                 $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
-                return vsprintf('%08s-%04s-%04x-%04x-%12s', str_split(bin2hex($data), 4));
-            }
-            $uuid = generateUuid();
+                $uuid = vsprintf('%08s-%04s-%04x-%04x-%12s', str_split(bin2hex($data), 4));
 
-            // Simulation de réponse API pour tests
-            $responseBody = [
-                'status' => 'SUCCESSFUL',
-                'reference' => $uuid,
-                'message' => 'Transaction réussie (simulation)'
-            ];
+                $attempt->update([
+                    'status' => 'withdrawn',
+                    'receiver_operator' => $operator,
+                    'receiver_phone' => $phoneNumber,
+                    'receiver_name' => $request->input('name') ? (string) $request->input('name') : null,
+                    'receiver_email' => $request->input('email') ? (string) $request->input('email') : null,
+                ]);
 
-            // Mettre à jour la tentative avec les informations de retrait
-            $attempt->update([
-                'status' => 'withdrawn',
-                'receiver_operator' => $operator,
-                'receiver_phone' => $phoneNumber,
-                'receiver_name' => $request->input('name') ? (string) $request->input('name') : null,
-                'receiver_email' => $request->input('email') ? (string) $request->input('email') : null,
-            ]);
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Gain retiré avec succès',
+                    'reference' => $uuid,
+                    'amount' => $amount,
+                ], 200);
+            });
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Gain retiré avec succès',
-                'reference' => $uuid,
-                'amount' => $amount
-            ], 200);
-
+            return $response;
         } catch (\Exception $e) {
             Log::error('Erreur lors du retrait du gain de quiz: ' . $e->getMessage(), [
                 'attempt_id' => $request->input('attemptId'),

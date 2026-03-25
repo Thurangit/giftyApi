@@ -9,6 +9,9 @@ use DateTime;
 use Illuminate\Http\Request;
 use GuzzleHttp\Client;
 use App\Support\LinkUnavailable;
+use App\Helpers\EyamoUserResolver;
+use App\Support\PhoneNormalizer;
+use Illuminate\Support\Facades\DB;
 
 class ReceivePayController extends Controller
 {
@@ -156,114 +159,151 @@ class ReceivePayController extends Controller
 
     public function withdraw(Request $request)
     {
+        $request->validate([
+            'refGift' => 'required|string|max:255',
+            'giftAmount' => 'required|numeric|min:1',
+            'paymentMethod' => 'required|string|max:50',
+            'identity_phone' => 'required|string|max:32',
+            'identity_email' => 'nullable|string|email|max:255',
+            'receiver_name' => 'nullable|string|max:120',
+        ]);
 
-        $phoneNumber = $request->input('phoneNumber');
-        $amount = $request->input('giftAmount');
+        $amount = (int) $request->input('giftAmount');
         $ref = $request->input('refGift');
         $operator = $request->input('paymentMethod');
-        $infoGift = Gift::where('ref_two', '=', $ref)->first();
-        $Gift_Ref = GiftRef::where('ref', '=', $infoGift->ref_one)->first();
-        $Gift_App = benefit::where('ref', '=', $infoGift->ref_one)->first();
+        $phoneNumber = $request->input('phoneNumber');
 
-        if (!$infoGift) {
-            return response()->json([
-                'error' => 'Cadeau inexistant',
-                'reference' => $ref
-            ], 408);
-        } else {
-            if ($infoGift->status == "Send") {
-                if ($Gift_Ref->status == "Send") {
-                    function generateUuid()
-                    {
-                        $data = random_bytes(16); // Modifier quelques bits pour respecter le format UUID v4
-                        $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
-                        $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
-                        return vsprintf('%08s-%04s-%04x-%04x-%12s', str_split(bin2hex($data), 4));
-                    } // Exemple d'utilisation
-                    $uuid = generateUuid();
-                    
-                    // ============================================
-                    // API DE PAIEMENT COMMENTÉE POUR TESTS
-                    // ============================================
-                    // TODO: Décommenter quand l'API de paiement Campay sera prête
-                    /*
-                    $client = new Client();
-                    $maxRetries = 120; // 2 minutes (1 tentative par seconde)
-                    $retryInterval = 1; // 1 seconde entre chaque tentative
-
-                    for ($i = 0; $i < $maxRetries; $i++) {
-                        $response = $client->post(
-                            'https://www.campay.net/api/withdraw/',
-                            [
-                                'headers' => [
-                                    'Authorization' => 'Token 4c298a57e6e3bc67e07ac1f84c752b0076d61685',
-                                    'Content-Type' => 'application/json',
-                                ],
-                                'json' => [
-                                    'amount' => $amount,
-                                    'to' => "237" . $phoneNumber,
-                                    'description' => "Reception cadeau",
-                                    'external_reference' => $uuid,
-                                    'uuid' => $uuid,
-                                ]
-                            ]
-                        );
-
-                        $responseBody = json_decode($response->getBody(), true);
-
-                        // Si le statut est SUCCESSFUL, retournez immédiatement le succès
-                        if (isset($responseBody['status']) && $responseBody['status'] === 'SUCCESSFUL') {
-                    */
-                    
-                    // Simulation de réponse API pour tests (à supprimer quand l'API sera prête)
-                    $responseBody = [
-                        'status' => 'SUCCESSFUL',
-                        'reference' => $uuid,
-                        'message' => 'Transaction réussie (simulation)'
-                    ];
-                    
-                    // Simuler le comportement de l'API de paiement - succès immédiat
-                            $infoGift->update([
-                                'receiver_opertor' => $operator,
-                                'receiver' => $phoneNumber,
-                                'status' => 'received'
-                            ]);
-                            $Gift_Ref->update([
-                                'status' => 'received'
-                            ]);
-                            $Gift_App->update([
-                                'status' => 'received'
-                            ]);
-
-                            return response()->json($responseBody, 200);
-
-                    /*
-                        // Si le statut est autre chose que PENDING, retournez l'erreur
-                        if (isset($responseBody['status']) && $responseBody['status'] !== 'PENDING') {
-                            return response()->json($responseBody, $response->getStatusCode());
-                        }
-
-                        // Si le statut est PENDING, attendez 1 seconde avant de réessayer
-                        sleep($retryInterval);
-                    }
-
-                    // Si après 2 minutes (120 tentatives), le statut reste PENDING
-                    return response()->json([
-                        'error' => 'Transaction en attente après 2 minutes',
-                        'reference' => $ref
-                    ], 408); // Code HTTP 408 pour Request Timeout
-                    */
-                }
-            } else {
-
+        if ($operator === 'Eyamo') {
+            $request->validate([
+                'eyamo_identifier' => 'required|string|max:255',
+            ]);
+            $eyamoUser = EyamoUserResolver::resolve((string) $request->input('eyamo_identifier'));
+            if (! $eyamoUser) {
                 return response()->json([
-                    'error' => 'Cadeau déjà retirer',
-                    'reference' => $ref
-                ], 408); // Code HTTP 408 pour Request Timeout
-
+                    'message' => 'Compte Eyamo introuvable. Utilisez votre code E##-#######, email ou numéro enregistré.',
+                ], 422);
             }
+            $rawPhone = preg_replace('/\D/', '', (string) $eyamoUser->phone);
+            if ($rawPhone === '' || strlen($rawPhone) < 9) {
+                return response()->json([
+                    'message' => 'Ce compte Eyamo ne dispose pas d\'un numéro de téléphone valide pour le versement.',
+                ], 422);
+            }
+            $phoneNumber = $rawPhone;
+        } elseif (in_array($operator, ['Orange', 'MTN'], true)) {
+            $request->validate([
+                'phoneNumber' => 'required|string|max:20',
+            ]);
+            $phoneNumber = preg_replace('/\D/', '', (string) $phoneNumber);
+        } else {
+            /* Carte ou autre : versement mobile non utilisé ; enregistrer uniquement l’identité côté tracking */
+            $phoneNumber = $request->input('phoneNumber')
+                ? preg_replace('/\D/', '', (string) $request->input('phoneNumber'))
+                : '';
         }
 
+        $normIdentity = PhoneNormalizer::normalizeCm($request->input('identity_phone'));
+        if ($normIdentity === '') {
+            return response()->json([
+                'message' => 'Numéro d\'identification invalide (requis pour sécuriser votre retrait, distinct du compte de versement).',
+            ], 422);
+        }
+
+        $identityEmail = $request->input('identity_email')
+            ? strtolower(trim((string) $request->input('identity_email')))
+            : null;
+        $receiverDisplayName = $request->input('receiver_name')
+            ? mb_substr(trim((string) $request->input('receiver_name')), 0, 120)
+            : null;
+
+        try {
+            return DB::transaction(function () use ($ref, $amount, $operator, $phoneNumber, $normIdentity, $identityEmail, $receiverDisplayName) {
+                $infoGift = Gift::where('ref_two', '=', $ref)->lockForUpdate()->first();
+
+                if (! $infoGift) {
+                    return response()->json([
+                        'error' => 'Cadeau inexistant',
+                        'reference' => $ref,
+                    ], 404);
+                }
+
+                if ($infoGift->status !== 'Send') {
+                    return response()->json([
+                        'error' => 'Cadeau déjà retiré ou indisponible',
+                        'reference' => $ref,
+                    ], 408);
+                }
+
+                if ((int) $infoGift->amount !== $amount) {
+                    return response()->json([
+                        'message' => 'Le montant ne correspond pas à ce cadeau.',
+                    ], 422);
+                }
+
+                $existingTrack = $infoGift->receiver_tracking_phone
+                    ? PhoneNormalizer::normalizeCm($infoGift->receiver_tracking_phone)
+                    : '';
+                if ($existingTrack !== '') {
+                    if (! PhoneNormalizer::same($existingTrack, $normIdentity)) {
+                        return response()->json([
+                            'message' => 'Ce numéro d\'identification ne correspond pas à celui enregistré pour ce cadeau.',
+                        ], 403);
+                    }
+                }
+
+                $Gift_Ref = GiftRef::where('ref', '=', $infoGift->ref_one)->lockForUpdate()->first();
+                $Gift_App = benefit::where('ref', '=', $infoGift->ref_one)->lockForUpdate()->first();
+
+                if (! $Gift_Ref || $Gift_Ref->status !== 'Send') {
+                    return response()->json([
+                        'error' => 'Référence de paiement invalide ou déjà utilisée',
+                        'reference' => $ref,
+                    ], 409);
+                }
+
+                if (! $Gift_App || $Gift_App->status !== 'Send') {
+                    return response()->json([
+                        'error' => 'Référence de commission invalide ou déjà utilisée',
+                        'reference' => $ref,
+                    ], 409);
+                }
+
+                $data = random_bytes(16);
+                $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
+                $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
+                $uuid = vsprintf('%08s-%04s-%04x-%04x-%12s', str_split(bin2hex($data), 4));
+
+                $responseBody = [
+                    'status' => 'SUCCESSFUL',
+                    'reference' => $uuid,
+                    'message' => 'Transaction réussie (simulation)',
+                ];
+
+                $updateGift = [
+                    'receiver_opertor' => $operator,
+                    'receiver' => $phoneNumber,
+                    'receiver_tracking_phone' => $normIdentity,
+                    'status' => 'received',
+                ];
+                if ($identityEmail) {
+                    $updateGift['receiver_tracking_email'] = $identityEmail;
+                }
+                if ($receiverDisplayName) {
+                    $updateGift['receiver_identity_name'] = $receiverDisplayName;
+                }
+
+                $infoGift->update($updateGift);
+                $Gift_Ref->update(['status' => 'received']);
+                $Gift_App->update(['status' => 'received']);
+
+                return response()->json($responseBody, 200);
+            });
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Erreur lors du traitement du retrait',
+                'reference' => $ref,
+            ], 500);
+        }
     }
 
     /**

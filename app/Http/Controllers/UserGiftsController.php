@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Http\Controllers\WalletController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Support\PhoneNormalizer;
 
 class UserGiftsController extends Controller
 {
@@ -40,6 +41,8 @@ class UserGiftsController extends Controller
                     'amount' => $gift->amount,
                     'receiver' => $gift->receiver,
                     'receiver_name' => $gift->other_one,
+                    'receiver_identity_name' => $gift->receiver_identity_name,
+                    'receiver_tracking_phone' => $gift->receiver_tracking_phone,
                     'message' => $gift->message,
                     'image' => $gift->image,
                     'status' => $normalizedStatus,
@@ -72,15 +75,33 @@ class UserGiftsController extends Controller
     {
         try {
             $phone = $request->query('phone');
+            $email = $request->query('email');
+            $normPhone = $phone ? PhoneNormalizer::normalizeCm($phone) : '';
 
-            if (!$phone) {
+            if ($normPhone === '' && ! $email) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Veuillez fournir un numéro de téléphone'
+                    'message' => 'Veuillez fournir un numéro de téléphone et/ou une adresse e-mail',
                 ], 400);
             }
 
-            $gifts = Gift::where('receiver', 'like', '%' . $phone . '%')
+            $emailNorm = $email ? strtolower(trim((string) $email)) : '';
+
+            $gifts = Gift::query()
+                ->when($normPhone !== '' && $emailNorm !== '', function ($q) use ($normPhone, $emailNorm) {
+                    $q->where(function ($w) use ($normPhone, $emailNorm) {
+                        $w->where('receiver_tracking_phone', $normPhone)
+                            ->orWhere('receiver_tracking_email', $emailNorm)
+                            ->orWhere('receiver', 'like', '%' . $normPhone . '%');
+                    });
+                })
+                ->when($normPhone !== '' && $emailNorm === '', function ($q) use ($normPhone) {
+                    $q->where(function ($w) use ($normPhone) {
+                        $w->where('receiver_tracking_phone', $normPhone)
+                            ->orWhere('receiver', 'like', '%' . $normPhone . '%');
+                    });
+                })
+                ->when($normPhone === '' && $emailNorm !== '', fn ($q) => $q->where('receiver_tracking_email', $emailNorm))
                 ->orderBy('created_at', 'desc')
                 ->get();
 
@@ -97,6 +118,8 @@ class UserGiftsController extends Controller
                     'status' => $normalizedStatus,
                     'is_claimed' => $normalizedStatus === 'received' || $normalizedStatus === 'completed',
                     'can_claim' => $normalizedStatus === 'pending' || $normalizedStatus === 'active',
+                    'receiver_identity_name' => $gift->receiver_identity_name,
+                    'receiver_tracking_phone' => $gift->receiver_tracking_phone,
                     'created_at' => $gift->created_at,
                 ];
             });
@@ -147,6 +170,9 @@ class UserGiftsController extends Controller
                     'receiver' => $gift->receiver,
                     'receiver_operator' => $gift->receiver_opertor,
                     'receiver_name' => $gift->other_one,
+                    'receiver_identity_name' => $gift->receiver_identity_name,
+                    'receiver_tracking_phone' => $gift->receiver_tracking_phone,
+                    'receiver_tracking_email' => $gift->receiver_tracking_email,
                     'message' => $gift->message,
                     'image' => $gift->image,
                     'email' => $gift->email,

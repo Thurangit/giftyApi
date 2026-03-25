@@ -9,7 +9,9 @@ use App\Helpers\CodeGenerator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use App\Support\LinkUnavailable;
+use App\Support\PhoneNormalizer;
 
 class MomentController extends Controller
 {
@@ -22,6 +24,7 @@ class MomentController extends Controller
             $validated = $request->validate([
                 'creator_name' => 'required|string|max:255',
                 'creator_email' => 'nullable|email|max:255',
+                'creator_phone' => 'nullable|string|max:32',
                 'total_moments' => 'required|integer|in:3,4,5',
                 'best_moment_order' => 'required|integer|min:1',
                 'amount' => 'required|integer|min:1',
@@ -58,10 +61,15 @@ class MomentController extends Controller
         // Générer un lien unique
         $uniqueLink = 'moment-' . Str::random(32);
 
+        $creatorPhone = isset($validated['creator_phone'])
+            ? PhoneNormalizer::normalizeCm($validated['creator_phone'])
+            : '';
+
         // Créer le moment
         $moment = Moment::create([
             'creator_name' => $validated['creator_name'],
             'creator_email' => $validated['creator_email'] ?? null,
+            'creator_phone' => $creatorPhone !== '' ? $creatorPhone : null,
             'unique_link' => $uniqueLink,
             'access_code' => CodeGenerator::generateAccessCode('moment'),
             'total_moments' => $validated['total_moments'],
@@ -387,7 +395,10 @@ class MomentController extends Controller
                     'selected_moment_order' => (int) $attempt->selected_moment_order,
                     'best_moment_order' => (int) $attempt->moment->best_moment_order,
                     'best_moment_description' => $bestMoment ? $bestMoment->moment_description : null,
-                    'selected_moment_description' => $attempt->moment->items->where('moment_order', $attempt->selected_moment_order)->first()?->moment_description
+                    'selected_moment_description' => $attempt->moment->items->where('moment_order', $attempt->selected_moment_order)->first()?->moment_description,
+                    'participant_phone_last4' => ($attempt->has_won && $attempt->participant_phone)
+                        ? substr(PhoneNormalizer::normalizeCm($attempt->participant_phone), -4)
+                        : null,
                 ]
             ]);
         } catch (\Exception $e) {
@@ -400,6 +411,83 @@ class MomentController extends Controller
                 'success' => false,
                 'message' => 'Erreur lors de la récupération du résultat: ' . $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Retirer le gain d’un moment (même logique de verrou que le quiz).
+     */
+    public function withdrawMomentPrize(Request $request)
+    {
+        $request->validate([
+            'attemptId' => 'required|integer|exists:moment_attempts,id',
+            'amount' => 'required|integer|min:1',
+            'participant_phone' => 'required|string',
+            'name' => 'nullable|string|max:100',
+            'email' => 'nullable|email|max:255',
+            'phoneNumber' => 'required|string|regex:/^[0-9]{9,15}$/',
+            'operator' => 'required|string|in:OM,MOMO',
+            'promoCode' => 'nullable|string|max:100',
+            'paymentMethod' => 'required|string|in:Orange,MTN',
+        ]);
+
+        $attemptId = (int) $request->input('attemptId');
+        $amount = (int) $request->input('amount');
+        $identityPhone = $request->input('participant_phone');
+        $payoutPhone = preg_replace('/\D/', '', (string) $request->input('phoneNumber'));
+        $operator = $request->input('operator');
+
+        try {
+            return DB::transaction(function () use ($request, $attemptId, $amount, $identityPhone, $payoutPhone, $operator) {
+                $attempt = MomentAttempt::where('id', $attemptId)->lockForUpdate()->first();
+
+                if (! $attempt) {
+                    return response()->json(['success' => false, 'message' => 'Tentative introuvable'], 404);
+                }
+
+                if (! PhoneNormalizer::same($identityPhone, $attempt->participant_phone)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Le numéro ne correspond pas à celui utilisé lors du moment.',
+                    ], 403);
+                }
+
+                if (! $attempt->has_won) {
+                    return response()->json(['success' => false, 'message' => 'Vous n\'avez pas gagné ce moment'], 400);
+                }
+
+                if ($attempt->status === 'withdrawn') {
+                    return response()->json(['success' => false, 'message' => 'Le gain a déjà été retiré'], 400);
+                }
+
+                if ((int) $attempt->won_amount !== $amount) {
+                    return response()->json(['success' => false, 'message' => 'Le montant ne correspond pas au gain'], 400);
+                }
+
+                $data = random_bytes(16);
+                $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
+                $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
+                $uuid = vsprintf('%08s-%04s-%04x-%04x-%12s', str_split(bin2hex($data), 4));
+
+                $attempt->update([
+                    'status' => 'withdrawn',
+                    'receiver_operator' => $operator,
+                    'receiver_phone' => $payoutPhone,
+                    'receiver_name' => $request->input('name') ? (string) $request->input('name') : null,
+                    'receiver_email' => $request->input('email') ? (string) $request->input('email') : null,
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Gain retiré avec succès',
+                    'reference' => $uuid,
+                    'amount' => $amount,
+                ], 200);
+            });
+        } catch (\Exception $e) {
+            Log::error('withdrawMomentPrize: ' . $e->getMessage());
+
+            return response()->json(['success' => false, 'message' => 'Erreur lors du retrait'], 500);
         }
     }
 }

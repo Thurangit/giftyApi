@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Http\Controllers\WalletController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Support\PhoneNormalizer;
 
 class UserGamesController extends Controller
 {
@@ -23,23 +24,32 @@ class UserGamesController extends Controller
     {
         try {
             $email = $request->query('email');
+            $phone = $request->query('phone');
+            $normPhone = $phone ? PhoneNormalizer::normalizeCm($phone) : '';
 
-            if (!$email) {
+            if (! $email && $normPhone === '') {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Veuillez fournir une adresse email'
+                    'message' => 'Veuillez fournir une adresse email ou un numéro de téléphone',
                 ], 400);
             }
 
             $games = [];
 
-            // Quiz créés - filtrer uniquement par email
+            // Quiz créés — email et/ou téléphone créateur (hors paiement)
             $quizzes = Quiz::with(['attempts' => function ($q) {
                 $q->orderBy('created_at', 'desc');
             }])
-            ->where('creator_email', $email)
-            ->orderBy('created_at', 'desc')
-            ->get();
+                ->when($email && $normPhone !== '', function ($q) use ($email, $normPhone) {
+                    $q->where(function ($w) use ($email, $normPhone) {
+                        $w->whereRaw('LOWER(creator_email) = ?', [strtolower(trim($email))])
+                            ->orWhere('creator_phone', $normPhone);
+                    });
+                })
+                ->when($email && $normPhone === '', fn ($q) => $q->whereRaw('LOWER(creator_email) = ?', [strtolower(trim($email))]))
+                ->when(! $email && $normPhone !== '', fn ($q) => $q->where('creator_phone', $normPhone))
+                ->orderBy('created_at', 'desc')
+                ->get();
 
             foreach ($quizzes as $quiz) {
                 $hasWinner = $quiz->attempts->where('has_won', true)->count() > 0;
@@ -60,13 +70,19 @@ class UserGamesController extends Controller
                 ];
             }
 
-            // Moments créés - filtrer uniquement par email
             $moments = Moment::with(['attempts' => function ($q) {
                 $q->orderBy('created_at', 'desc');
             }])
-            ->where('creator_email', $email)
-            ->orderBy('created_at', 'desc')
-            ->get();
+                ->when($email && $normPhone !== '', function ($q) use ($email, $normPhone) {
+                    $q->where(function ($w) use ($email, $normPhone) {
+                        $w->whereRaw('LOWER(creator_email) = ?', [strtolower(trim($email))])
+                            ->orWhere('creator_phone', $normPhone);
+                    });
+                })
+                ->when($email && $normPhone === '', fn ($q) => $q->whereRaw('LOWER(creator_email) = ?', [strtolower(trim($email))]))
+                ->when(! $email && $normPhone !== '', fn ($q) => $q->where('creator_phone', $normPhone))
+                ->orderBy('created_at', 'desc')
+                ->get();
 
             foreach ($moments as $moment) {
                 $hasWinner = $moment->attempts->where('has_won', true)->count() > 0;
@@ -88,10 +104,10 @@ class UserGamesController extends Controller
             }
 
             // Challenges créés
-            if ($phone) {
+            if ($normPhone !== '') {
                 $challenges = Challenge::with(['participants', 'results'])
-                    ->whereHas('participants', function ($q) use ($phone) {
-                        $q->where('phone', $phone)->where('role', 'creator');
+                    ->whereHas('participants', function ($q) use ($normPhone) {
+                        $q->where('phone', $normPhone)->where('role', 'creator');
                     })
                     ->orderBy('created_at', 'desc')
                     ->get();

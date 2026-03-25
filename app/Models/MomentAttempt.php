@@ -16,7 +16,11 @@ class MomentAttempt extends Model
         'selected_moment_order',
         'has_won',
         'won_amount',
-        'status'
+        'status',
+        'receiver_operator',
+        'receiver_phone',
+        'receiver_name',
+        'receiver_email',
     ];
 
     public function moment()

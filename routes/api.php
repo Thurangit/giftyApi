@@ -72,6 +72,7 @@ Route::get('/quiz/result/{attemptId}', [App\Http\Controllers\QuizController::cla
 Route::get('/quiz/{link}', [App\Http\Controllers\QuizController::class, 'getQuiz'])->name('quiz_get');
 Route::get('/quiz/{link}/share', [App\Http\Controllers\QuizController::class, 'getQuizShareInfo'])->name('quiz_share_info');
 Route::post('/quiz/{link}/check-access', [App\Http\Controllers\QuizController::class, 'checkAccess'])->name('quiz_check_access');
+Route::post('/quiz/{link}/participant-outcome', [App\Http\Controllers\QuizController::class, 'participantOutcome'])->name('quiz_participant_outcome');
 Route::post('/quiz/{link}/challenge/join', [App\Http\Controllers\QuizController::class, 'joinChallenge'])->name('quiz_challenge_join');
 Route::post('/quiz/{link}/challenge/creator-withdraw', [App\Http\Controllers\QuizController::class, 'withdrawChallengePot'])->name('quiz_challenge_creator_withdraw');
 Route::post('/quiz/{link}/submit', [App\Http\Controllers\QuizController::class, 'submitQuiz'])->name('quiz_submit');
@@ -84,6 +85,7 @@ Route::get('/moment/{link}', [App\Http\Controllers\MomentController::class, 'get
 Route::get('/moment/{link}/share', [App\Http\Controllers\MomentController::class, 'getMomentShareInfo'])->name('moment_share_info');
 Route::post('/moment/{link}/check-access', [App\Http\Controllers\MomentController::class, 'checkAccess'])->name('moment_check_access');
 Route::post('/moment/{link}/submit', [App\Http\Controllers\MomentController::class, 'submitMoment'])->name('moment_submit');
+Route::post('/moment/withdraw-prize', [App\Http\Controllers\MomentController::class, 'withdrawMomentPrize'])->name('moment_withdraw_prize');
 
 // Challenge routes (À nous 2)
 Route::post('/challenge/create', [App\Http\Controllers\ChallengeController::class, 'createChallenge'])->name('challenge_create');
